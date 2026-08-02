@@ -283,7 +283,8 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
           ],
         ),
       ),
-    );
+    ),
+  );
   }
 
   Widget _buildWarrantyBadge(BuildContext context, int expiryDateMs) {

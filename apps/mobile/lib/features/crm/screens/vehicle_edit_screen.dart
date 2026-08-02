@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/db/app_database.dart';
+import '../data/customer_repository.dart';
 import '../data/vehicle_repository.dart';
 import 'customer_search_screen.dart';
 import 'machine_search_screen.dart';
