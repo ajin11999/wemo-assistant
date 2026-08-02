@@ -126,6 +126,111 @@ class SyncRepository {
       await db.batch((b) => b.insertAllOnConflictUpdate(table, upserts));
     }
   }
+
+  /// Get all pending local CRM changes (rows updated after [since])
+  /// to push back to backend.
+  Future<Map<String, List<Map<String, dynamic>>>> getPendingCrmChanges(DateTime? since) async {
+    final result = <String, List<Map<String, dynamic>>>{};
+
+    // 1. Customers
+    final custQuery = db.select(db.customers);
+    if (since != null) {
+      custQuery.where((t) => t.updatedAt.isGreaterThanValue(since));
+    }
+    final custRows = await custQuery.get();
+    if (custRows.isNotEmpty) {
+      result['customers'] = custRows.map((c) => {
+        'id': c.id,
+        'name': c.name,
+        'phone': c.phone,
+        'phoneAlt': c.phoneAlt,
+        'email': c.email,
+        'address': c.address,
+        'notes': c.notes,
+        'tag': c.tag,
+        'updatedAt': c.updatedAt.toIso8601String(),
+        'deletedAt': c.deletedAt?.toIso8601String(),
+      }).toList();
+    }
+
+    // 2. CustomerVehicles
+    final vehicleQuery = db.select(db.customerVehicles);
+    if (since != null) {
+      vehicleQuery.where((t) => t.updatedAt.isGreaterThanValue(since));
+    }
+    final vehicleRows = await vehicleQuery.get();
+    if (vehicleRows.isNotEmpty) {
+      result['customerVehicles'] = vehicleRows.map((v) => {
+        'id': v.id,
+        'customerId': v.customerId,
+        'machineId': v.machineId,
+        'licensePlate': v.licensePlate,
+        'frameNumber': v.frameNumber,
+        'colorId': v.colorId,
+        'year': v.year,
+        'nickname': v.nickname,
+        'notes': v.notes,
+        'updatedAt': v.updatedAt.toIso8601String(),
+        'deletedAt': v.deletedAt?.toIso8601String(),
+      }).toList();
+    }
+
+    // 3. MaintenanceRecords
+    final recQuery = db.select(db.maintenanceRecords);
+    if (since != null) {
+      recQuery.where((t) => t.updatedAt.isGreaterThanValue(since));
+    }
+    final recRows = await recQuery.get();
+    if (recRows.isNotEmpty) {
+      result['maintenanceRecords'] = recRows.map((r) => {
+        'id': r.id,
+        'customerVehicleId': r.customerVehicleId,
+        'customerId': r.customerId,
+        'type': r.type,
+        'date': r.date,
+        'description': r.description,
+        'technicianId': r.technicianId,
+        'clerkId': r.clerkId,
+        'invoiceNumber': r.invoiceNumber,
+        'totalAmount': r.totalAmount,
+        'notes': r.notes,
+        'updatedAt': r.updatedAt.toIso8601String(),
+        'deletedAt': r.deletedAt?.toIso8601String(),
+      }).toList();
+    }
+
+    // 4. MaintenanceItems
+    final itemQuery = db.select(db.maintenanceItems);
+    if (since != null) {
+      itemQuery.where((t) => t.updatedAt.isGreaterThanValue(since));
+    }
+    final itemRows = await itemQuery.get();
+    if (itemRows.isNotEmpty) {
+      result['maintenanceItems'] = itemRows.map((i) => {
+        'id': i.id,
+        'maintenanceRecordId': i.maintenanceRecordId,
+        'category': i.category,
+        'partId': i.partId,
+        'partNumberId': i.partNumberId,
+        'partNumber': i.partNumber,
+        'brand': i.brand,
+        'quantity': i.quantity,
+        'hasWarranty': i.hasWarranty,
+        'warrantyPeriodValue': i.warrantyPeriodValue,
+        'warrantyPeriodUnit': i.warrantyPeriodUnit,
+        'warrantyStartDate': i.warrantyStartDate,
+        'warrantyExpiryDate': i.warrantyExpiryDate,
+        'warrantyNotes': i.warrantyNotes,
+        'unitPrice': i.unitPrice,
+        'notes': i.notes,
+        'sortOrder': i.sortOrder,
+        'updatedAt': i.updatedAt.toIso8601String(),
+        'deletedAt': i.deletedAt?.toIso8601String(),
+      }).toList();
+    }
+
+    return result;
+  }
 }
 
 // --- JSON -> companion mappers ---------------------------------------------

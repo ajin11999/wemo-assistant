@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/db/app_database.dart';
+import '../../sync/sync_controller.dart';
 import '../data/customer_repository.dart';
 
 /// Screen for creating or editing a customer.
@@ -74,31 +75,38 @@ class _CustomerEditScreenState extends State<CustomerEditScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     final db = Provider.of<AppDatabase>(context, listen: false);
+    final sync = Provider.of<SyncController>(context, listen: false);
+    final navigator = Navigator.of(context);
     final repository = CustomerRepository(db);
 
-    final customerId = widget.customerId != null
-        ? await repository.updateCustomer(
-            id: widget.customerId!,
-            name: _nameController.text,
-            phone: _phoneController.text.isEmpty ? null : _phoneController.text,
-            phoneAlt: _phoneAltController.text.isEmpty ? null : _phoneAltController.text,
-            email: _emailController.text.isEmpty ? null : _emailController.text,
-            address: _addressController.text.isEmpty ? null : _addressController.text,
-            notes: _notesController.text.isEmpty ? null : _notesController.text,
-            tag: _tagController.text.isEmpty ? null : _tagController.text,
-          )
-        : await repository.createCustomer(
-            name: _nameController.text,
-            phone: _phoneController.text.isEmpty ? null : _phoneController.text,
-            phoneAlt: _phoneAltController.text.isEmpty ? null : _phoneAltController.text,
-            email: _emailController.text.isEmpty ? null : _emailController.text,
-            address: _addressController.text.isEmpty ? null : _addressController.text,
-            notes: _notesController.text.isEmpty ? null : _notesController.text,
-            tag: _tagController.text.isEmpty ? null : _tagController.text,
-          );
+    final String? resultId;
+    if (widget.customerId != null) {
+      final ok = await repository.updateCustomer(
+        id: widget.customerId!,
+        name: _nameController.text,
+        phone: _phoneController.text.isEmpty ? null : _phoneController.text,
+        phoneAlt: _phoneAltController.text.isEmpty ? null : _phoneAltController.text,
+        email: _emailController.text.isEmpty ? null : _emailController.text,
+        address: _addressController.text.isEmpty ? null : _addressController.text,
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+        tag: _tagController.text.isEmpty ? null : _tagController.text,
+      );
+      resultId = ok ? widget.customerId : null;
+    } else {
+      resultId = await repository.createCustomer(
+        name: _nameController.text,
+        phone: _phoneController.text.isEmpty ? null : _phoneController.text,
+        phoneAlt: _phoneAltController.text.isEmpty ? null : _phoneAltController.text,
+        email: _emailController.text.isEmpty ? null : _emailController.text,
+        address: _addressController.text.isEmpty ? null : _addressController.text,
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+        tag: _tagController.text.isEmpty ? null : _tagController.text,
+      );
+    }
 
-    if (customerId != null && mounted) {
-      Navigator.pop(context, customerId);
+    if (resultId != null) {
+      void syncFuture = sync.syncNow();
+      navigator.pop(resultId);
     }
   }
 
@@ -135,11 +143,12 @@ class _CustomerEditScreenState extends State<CustomerEditScreen> {
 
                 if (confirm == true && mounted) {
                   final db = Provider.of<AppDatabase>(context, listen: false);
+                  final sync = Provider.of<SyncController>(context, listen: false);
+                  final navigator = Navigator.of(context);
                   final repository = CustomerRepository(db);
                   await repository.deleteCustomer(widget.customerId!);
-                  if (mounted) {
-                    Navigator.pop(context, 'deleted');
-                  }
+                  void syncFuture = sync.syncNow();
+                  navigator.pop('deleted');
                 }
               },
             ),

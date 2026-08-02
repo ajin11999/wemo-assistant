@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/db/app_database.dart';
+import '../../sync/sync_controller.dart';
 import '../data/record_item_repository.dart';
 import '../crm.dart';
 
@@ -18,31 +19,30 @@ class RecordItemEditScreen extends StatefulWidget {
 
 class _RecordItemEditScreenState extends State<RecordItemEditScreen> {
   final _formKey = GlobalKey<FormState>();
-  late TextEditingController _partNumberController;
+  late String _category;
   late TextEditingController _brandController;
+  late TextEditingController _partNumberController;
   late TextEditingController _quantityController;
   late TextEditingController _unitPriceController;
-  late TextEditingController _warrantyPeriodValueController;
-  late TextEditingController _warrantyNotesController;
   late TextEditingController _notesController;
 
-  String _category = 'other';
-  String _warrantyPeriodUnit = 'days';
   bool _hasWarranty = false;
+  late TextEditingController _warrantyPeriodValueController;
+  String _warrantyPeriodUnit = 'months';
   DateTime? _warrantyStartDate;
+  late TextEditingController _warrantyNotesController;
 
   @override
   void initState() {
     super.initState();
-    _partNumberController = TextEditingController();
+    _category = kMaintenanceItemCategories.first;
     _brandController = TextEditingController();
+    _partNumberController = TextEditingController();
     _quantityController = TextEditingController(text: '1');
     _unitPriceController = TextEditingController();
+    _notesController = TextEditingController();
     _warrantyPeriodValueController = TextEditingController();
     _warrantyNotesController = TextEditingController();
-    _notesController = TextEditingController();
-
-    _warrantyStartDate = DateTime.now();
 
     if (widget.itemId != null) {
       _loadItem();
@@ -51,13 +51,13 @@ class _RecordItemEditScreenState extends State<RecordItemEditScreen> {
 
   @override
   void dispose() {
-    _partNumberController.dispose();
     _brandController.dispose();
+    _partNumberController.dispose();
     _quantityController.dispose();
     _unitPriceController.dispose();
+    _notesController.dispose();
     _warrantyPeriodValueController.dispose();
     _warrantyNotesController.dispose();
-    _notesController.dispose();
     super.dispose();
   }
 
@@ -69,18 +69,18 @@ class _RecordItemEditScreenState extends State<RecordItemEditScreen> {
     if (item != null && mounted) {
       setState(() {
         _category = item.category;
-        _partNumberController.text = item.partNumber ?? '';
         _brandController.text = item.brand ?? '';
+        _partNumberController.text = item.partNumber ?? '';
         _quantityController.text = item.quantity.toString();
         _unitPriceController.text = item.unitPrice?.toString() ?? '';
-        _hasWarranty = item.hasWarranty == true;
-        _warrantyPeriodValueController.text = item.warrantyPeriodValue?.toString() ?? '';
-        _warrantyPeriodUnit = item.warrantyPeriodUnit ?? 'days';
-        _warrantyNotesController.text = item.warrantyNotes ?? '';
         _notesController.text = item.notes ?? '';
+        _hasWarranty = item.hasWarranty;
+        _warrantyPeriodValueController.text = item.warrantyPeriodValue?.toString() ?? '';
+        _warrantyPeriodUnit = item.warrantyPeriodUnit ?? 'months';
         _warrantyStartDate = item.warrantyStartDate != null 
             ? DateTime.fromMillisecondsSinceEpoch(item.warrantyStartDate!) 
-            : DateTime.now();
+            : null;
+        _warrantyNotesController.text = item.warrantyNotes ?? '';
       });
     }
   }
@@ -106,42 +106,48 @@ class _RecordItemEditScreenState extends State<RecordItemEditScreen> {
     final db = Provider.of<AppDatabase>(context, listen: false);
     final repository = RecordItemRepository(db);
 
-    final itemId = widget.itemId != null
-        ? await repository.updateItem(
-            id: widget.itemId!,
-            category: _category,
-            partNumber: _partNumberController.text.isEmpty ? null : _partNumberController.text,
-            brand: _brandController.text.isEmpty ? null : _brandController.text,
-            quantity: int.parse(_quantityController.text),
-            hasWarranty: _hasWarranty,
-            warrantyPeriodValue: _warrantyPeriodValueController.text.isEmpty 
-                ? null 
-                : int.parse(_warrantyPeriodValueController.text),
-            warrantyPeriodUnit: _warrantyPeriodUnit,
-            warrantyStartDate: _warrantyStartDate,
-            warrantyNotes: _warrantyNotesController.text.isEmpty ? null : _warrantyNotesController.text,
-            unitPrice: _unitPriceController.text.isEmpty ? null : int.parse(_unitPriceController.text),
-            notes: _notesController.text.isEmpty ? null : _notesController.text,
-          )
-        : await repository.createItem(
-            maintenanceRecordId: widget.recordId,
-            category: _category,
-            partNumber: _partNumberController.text.isEmpty ? null : _partNumberController.text,
-            brand: _brandController.text.isEmpty ? null : _brandController.text,
-            quantity: int.parse(_quantityController.text),
-            hasWarranty: _hasWarranty,
-            warrantyPeriodValue: _warrantyPeriodValueController.text.isEmpty 
-                ? null 
-                : int.parse(_warrantyPeriodValueController.text),
-            warrantyPeriodUnit: _warrantyPeriodUnit,
-            warrantyStartDate: _warrantyStartDate,
-            warrantyNotes: _warrantyNotesController.text.isEmpty ? null : _warrantyNotesController.text,
-            unitPrice: _unitPriceController.text.isEmpty ? null : int.parse(_unitPriceController.text),
-            notes: _notesController.text.isEmpty ? null : _notesController.text,
-          );
+    final String? resultId;
+    if (widget.itemId != null) {
+      final ok = await repository.updateItem(
+        id: widget.itemId!,
+        category: _category,
+        partNumber: _partNumberController.text.isEmpty ? null : _partNumberController.text,
+        brand: _brandController.text.isEmpty ? null : _brandController.text,
+        quantity: int.parse(_quantityController.text),
+        hasWarranty: _hasWarranty,
+        warrantyPeriodValue: _warrantyPeriodValueController.text.isEmpty 
+            ? null 
+            : int.parse(_warrantyPeriodValueController.text),
+        warrantyPeriodUnit: _warrantyPeriodUnit,
+        warrantyStartDate: _warrantyStartDate,
+        warrantyNotes: _warrantyNotesController.text.isEmpty ? null : _warrantyNotesController.text,
+        unitPrice: _unitPriceController.text.isEmpty ? null : int.parse(_unitPriceController.text),
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+      );
+      resultId = ok ? widget.itemId : null;
+    } else {
+      resultId = await repository.createItem(
+        maintenanceRecordId: widget.recordId,
+        category: _category,
+        partNumber: _partNumberController.text.isEmpty ? null : _partNumberController.text,
+        brand: _brandController.text.isEmpty ? null : _brandController.text,
+        quantity: int.parse(_quantityController.text),
+        hasWarranty: _hasWarranty,
+        warrantyPeriodValue: _warrantyPeriodValueController.text.isEmpty 
+            ? null 
+            : int.parse(_warrantyPeriodValueController.text),
+        warrantyPeriodUnit: _warrantyPeriodUnit,
+        warrantyStartDate: _warrantyStartDate,
+        warrantyNotes: _warrantyNotesController.text.isEmpty ? null : _warrantyNotesController.text,
+        unitPrice: _unitPriceController.text.isEmpty ? null : int.parse(_unitPriceController.text),
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+      );
+    }
 
-    if (itemId != null && mounted) {
-      Navigator.pop(context, itemId);
+    if (resultId != null && mounted) {
+      final sync = Provider.of<SyncController>(context, listen: false);
+      void syncFuture = sync.syncNow();
+      Navigator.pop(context, resultId);
     }
   }
 
@@ -181,6 +187,8 @@ class _RecordItemEditScreenState extends State<RecordItemEditScreen> {
                   final repository = RecordItemRepository(db);
                   await repository.deleteItem(widget.itemId!);
                   if (mounted) {
+                    final sync = Provider.of<SyncController>(context, listen: false);
+                    void syncFuture = sync.syncNow();
                     Navigator.pop(context, 'deleted');
                   }
                 }

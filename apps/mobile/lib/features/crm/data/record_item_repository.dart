@@ -131,7 +131,10 @@ class RecordItemRepository {
   // Delete item (soft delete)
   Future<bool> deleteItem(String id) async {
     final query = db.update(db.maintenanceItems)..where((t) => t.id.equals(id));
-    return await query.write(MaintenanceItemsCompanion(deletedAt: Value(DateTime.now()))) > 0;
+    return await query.write(MaintenanceItemsCompanion(
+      deletedAt: Value(DateTime.now()),
+      updatedAt: Value(DateTime.now()),
+    )) > 0;
   }
 
   // Reorder items

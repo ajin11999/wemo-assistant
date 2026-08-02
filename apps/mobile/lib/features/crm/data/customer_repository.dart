@@ -102,7 +102,10 @@ class CustomerRepository {
   // Delete customer (soft delete)
   Future<bool> deleteCustomer(String id) async {
     final query = db.update(db.customers)..where((t) => t.id.equals(id));
-    return await query.write(CustomersCompanion(deletedAt: Value(DateTime.now()))) > 0;
+    return await query.write(CustomersCompanion(
+      deletedAt: Value(DateTime.now()),
+      updatedAt: Value(DateTime.now()),
+    )) > 0;
   }
 
   // Get customer with their vehicles

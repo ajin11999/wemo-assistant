@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/db/app_database.dart';
+import '../../sync/sync_controller.dart';
 import '../data/customer_repository.dart';
 import '../data/vehicle_repository.dart';
 import 'customer_search_screen.dart';
@@ -102,31 +103,37 @@ class _VehicleEditScreenState extends State<VehicleEditScreen> {
     final db = Provider.of<AppDatabase>(context, listen: false);
     final repository = VehicleRepository(db);
 
-    final vehicleId = widget.vehicleId != null
-        ? await repository.updateVehicle(
-            id: widget.vehicleId!,
-            customerId: _selectedCustomerId!,
-            machineId: _selectedMachineId!,
-            licensePlate: _licensePlateController.text.isEmpty ? null : _licensePlateController.text,
-            frameNumber: _frameNumberController.text.isEmpty ? null : _frameNumberController.text,
-            colorId: _selectedColorId,
-            year: _yearController.text.isEmpty ? null : int.parse(_yearController.text),
-            nickname: _nicknameController.text.isEmpty ? null : _nicknameController.text,
-            notes: _notesController.text.isEmpty ? null : _notesController.text,
-          )
-        : await repository.createVehicle(
-            customerId: _selectedCustomerId!,
-            machineId: _selectedMachineId!,
-            licensePlate: _licensePlateController.text.isEmpty ? null : _licensePlateController.text,
-            frameNumber: _frameNumberController.text.isEmpty ? null : _frameNumberController.text,
-            colorId: _selectedColorId,
-            year: _yearController.text.isEmpty ? null : int.parse(_yearController.text),
-            nickname: _nicknameController.text.isEmpty ? null : _nicknameController.text,
-            notes: _notesController.text.isEmpty ? null : _notesController.text,
-          );
+    final String? resultId;
+    if (widget.vehicleId != null) {
+      final ok = await repository.updateVehicle(
+        id: widget.vehicleId!,
+        customerId: _selectedCustomerId!,
+        machineId: _selectedMachineId!,
+        licensePlate: _licensePlateController.text.isEmpty ? null : _licensePlateController.text,
+        frameNumber: _frameNumberController.text.isEmpty ? null : _frameNumberController.text,
+        colorId: _selectedColorId,
+        year: _yearController.text.isEmpty ? null : int.parse(_yearController.text),
+        nickname: _nicknameController.text.isEmpty ? null : _nicknameController.text,
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+      );
+      resultId = ok ? widget.vehicleId : null;
+    } else {
+      resultId = await repository.createVehicle(
+        customerId: _selectedCustomerId!,
+        machineId: _selectedMachineId!,
+        licensePlate: _licensePlateController.text.isEmpty ? null : _licensePlateController.text,
+        frameNumber: _frameNumberController.text.isEmpty ? null : _frameNumberController.text,
+        colorId: _selectedColorId,
+        year: _yearController.text.isEmpty ? null : int.parse(_yearController.text),
+        nickname: _nicknameController.text.isEmpty ? null : _nicknameController.text,
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+      );
+    }
 
-    if (vehicleId != null && mounted) {
-      Navigator.pop(context, vehicleId);
+    if (resultId != null && mounted) {
+      final sync = Provider.of<SyncController>(context, listen: false);
+      void syncFuture = sync.syncNow();
+      Navigator.pop(context, resultId);
     }
   }
 
@@ -200,6 +207,8 @@ class _VehicleEditScreenState extends State<VehicleEditScreen> {
                   final repository = VehicleRepository(db);
                   await repository.deleteVehicle(widget.vehicleId!);
                   if (mounted) {
+                    final sync = Provider.of<SyncController>(context, listen: false);
+                    void syncFuture = sync.syncNow();
                     Navigator.pop(context, 'deleted');
                   }
                 }

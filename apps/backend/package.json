@@ -23,6 +23,6 @@
     "@cloudflare/workers-types": "^4.0.0",
     "drizzle-kit": "^0.30.0",
     "typescript": "^5.7.0",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.118.0"
   }
 }

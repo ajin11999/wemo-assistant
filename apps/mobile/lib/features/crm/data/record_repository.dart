@@ -132,7 +132,10 @@ class RecordRepository {
   // Delete record (soft delete)
   Future<bool> deleteRecord(String id) async {
     final query = db.update(db.maintenanceRecords)..where((t) => t.id.equals(id));
-    return await query.write(MaintenanceRecordsCompanion(deletedAt: Value(DateTime.now()))) > 0;
+    return await query.write(MaintenanceRecordsCompanion(
+      deletedAt: Value(DateTime.now()),
+      updatedAt: Value(DateTime.now()),
+    )) > 0;
   }
 
   // Get recent records (limit)

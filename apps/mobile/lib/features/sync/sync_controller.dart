@@ -58,6 +58,13 @@ class SyncController extends ChangeNotifier {
     // Last-seen image state per assembly across the session (id -> delta).
     final imageDeltas = <String, AssemblyImageDelta>{};
     try {
+      // 1. Push pending local CRM changes to backend
+      final pendingCrm = await _repo.getPendingCrmChanges(lastSyncedAt);
+      if (pendingCrm.isNotEmpty) {
+        await api.push(pendingCrm);
+      }
+
+      // 2. Pull deltas from server
       var cursor = await _repo.currentCursor();
       while (true) {
         final page = await api.fetch(cursor: cursor);

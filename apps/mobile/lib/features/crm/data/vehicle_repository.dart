@@ -98,7 +98,10 @@ class VehicleRepository {
   // Delete vehicle (soft delete)
   Future<bool> deleteVehicle(String id) async {
     final query = db.update(db.customerVehicles)..where((t) => t.id.equals(id));
-    return await query.write(CustomerVehiclesCompanion(deletedAt: Value(DateTime.now()))) > 0;
+    return await query.write(CustomerVehiclesCompanion(
+      deletedAt: Value(DateTime.now()),
+      updatedAt: Value(DateTime.now()),
+    )) > 0;
   }
 
   // Get vehicles with their maintenance records

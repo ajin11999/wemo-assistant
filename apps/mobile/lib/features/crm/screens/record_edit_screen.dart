@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/db/app_database.dart';
+import '../../sync/sync_controller.dart';
 import '../data/record_repository.dart';
 import '../data/vehicle_repository.dart';
 import '../crm.dart';
@@ -21,25 +22,26 @@ class RecordEditScreen extends StatefulWidget {
 
 class _RecordEditScreenState extends State<RecordEditScreen> {
   final _formKey = GlobalKey<FormState>();
+  late String _type;
+  late DateTime _date;
   late TextEditingController _descriptionController;
   late TextEditingController _invoiceNumberController;
   late TextEditingController _totalAmountController;
   late TextEditingController _notesController;
 
-  String _type = 'service';
   String? _selectedVehicleId;
-  DateTime? _date;
 
   @override
   void initState() {
     super.initState();
+    _type = kMaintenanceRecordTypes.first;
+    _date = DateTime.now();
     _descriptionController = TextEditingController();
     _invoiceNumberController = TextEditingController();
     _totalAmountController = TextEditingController();
     _notesController = TextEditingController();
 
     _selectedVehicleId = widget.vehicleId;
-    _date = DateTime.now();
 
     if (widget.recordId != null) {
       _loadRecord();
@@ -62,13 +64,13 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
 
     if (record != null && mounted) {
       setState(() {
-        _descriptionController.text = record.description;
         _type = record.type;
+        _date = DateTime.fromMillisecondsSinceEpoch(record.date!);
         _selectedVehicleId = record.customerVehicleId;
+        _descriptionController.text = record.description;
         _invoiceNumberController.text = record.invoiceNumber ?? '';
         _totalAmountController.text = record.totalAmount?.toString() ?? '';
         _notesController.text = record.notes ?? '';
-        _date = record.date != null ? DateTime.fromMillisecondsSinceEpoch(record.date!) : DateTime.now();
       });
     }
   }
@@ -76,7 +78,7 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
   Future<void> _selectDate() async {
     final pickedDate = await showDatePicker(
       context: context,
-      initialDate: _date ?? DateTime.now(),
+      initialDate: _date,
       firstDate: DateTime(2000),
       lastDate: DateTime(2100),
     );
@@ -134,31 +136,37 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
     final db = Provider.of<AppDatabase>(context, listen: false);
     final repository = RecordRepository(db);
 
-    final recordId = widget.recordId != null
-        ? await repository.updateRecord(
-            id: widget.recordId!,
-            customerId: widget.customerId,
-            customerVehicleId: _selectedVehicleId,
-            type: _type,
-            date: _date,
-            description: _descriptionController.text,
-            invoiceNumber: _invoiceNumberController.text.isEmpty ? null : _invoiceNumberController.text,
-            totalAmount: _totalAmountController.text.isEmpty ? null : int.parse(_totalAmountController.text),
-            notes: _notesController.text.isEmpty ? null : _notesController.text,
-          )
-        : await repository.createRecord(
-            customerId: widget.customerId,
-            customerVehicleId: _selectedVehicleId,
-            type: _type,
-            date: _date,
-            description: _descriptionController.text,
-            invoiceNumber: _invoiceNumberController.text.isEmpty ? null : _invoiceNumberController.text,
-            totalAmount: _totalAmountController.text.isEmpty ? null : int.parse(_totalAmountController.text),
-            notes: _notesController.text.isEmpty ? null : _notesController.text,
-          );
+    final String? resultId;
+    if (widget.recordId != null) {
+      final ok = await repository.updateRecord(
+        id: widget.recordId!,
+        customerId: widget.customerId,
+        customerVehicleId: _selectedVehicleId,
+        type: _type,
+        date: _date,
+        description: _descriptionController.text,
+        invoiceNumber: _invoiceNumberController.text.isEmpty ? null : _invoiceNumberController.text,
+        totalAmount: _totalAmountController.text.isEmpty ? null : int.parse(_totalAmountController.text),
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+      );
+      resultId = ok ? widget.recordId : null;
+    } else {
+      resultId = await repository.createRecord(
+        customerId: widget.customerId,
+        customerVehicleId: _selectedVehicleId,
+        type: _type,
+        date: _date,
+        description: _descriptionController.text,
+        invoiceNumber: _invoiceNumberController.text.isEmpty ? null : _invoiceNumberController.text,
+        totalAmount: _totalAmountController.text.isEmpty ? null : int.parse(_totalAmountController.text),
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+      );
+    }
 
-    if (recordId != null && mounted) {
-      Navigator.pop(context, recordId);
+    if (resultId != null && mounted) {
+      final sync = Provider.of<SyncController>(context, listen: false);
+      void syncFuture = sync.syncNow();
+      Navigator.pop(context, resultId);
     }
   }
 
@@ -198,6 +206,8 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
                   final repository = RecordRepository(db);
                   await repository.deleteRecord(widget.recordId!);
                   if (mounted) {
+                    final sync = Provider.of<SyncController>(context, listen: false);
+                    void syncFuture = sync.syncNow();
                     Navigator.pop(context, 'deleted');
                   }
                 }

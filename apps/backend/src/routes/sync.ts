@@ -202,32 +202,86 @@ syncRoute.post('/push', requireClerkWrite, async (c) => {
     let deleted = 0;
 
     for (const row of rows as any[]) {
-      const op = row._sync_op || (row.deletedAt ? 'delete' : (row.id ? 'update' : 'insert'));
-      
-      if (op === 'delete' || row.deletedAt) {
-        // Soft delete
-        await db
-          .update(table)
-          .set({ deletedAt: row.deletedAt || new Date() })
-          .where(eq(table.id, row.id));
+      if (!row || typeof row !== 'object' || !row.id) continue;
+
+      const now = new Date();
+      const isDelete = !!row.deletedAt;
+
+      // Check if row already exists in D1
+      const existing = await db
+        .select({ id: table.id })
+        .from(table)
+        .where(eq(table.id, row.id))
+        .get();
+
+      const parseDate = (v: unknown) => (v != null ? new Date(v as string | number) : null);
+
+      if (isDelete) {
+        const deletedAtDate = parseDate(row.deletedAt) ?? now;
+        if (existing) {
+          await db
+            .update(table)
+            .set({ deletedAt: deletedAtDate, updatedAt: now })
+            .where(eq(table.id, row.id));
+        } else {
+          // Row was deleted before server ever saw it; insert tombstone so sync can propagate it
+          const tombstoneData: Record<string, unknown> = {
+            ...row,
+            createdAt: now,
+            updatedAt: now,
+            deletedAt: deletedAtDate,
+          };
+          delete tombstoneData._sync_op;
+          await db.insert(table).values(tombstoneData);
+        }
         deleted++;
-      } else if (row.id) {
-        // Update existing
-        const updateData: Record<string, unknown> = { ...row, updatedAt: new Date() };
+      } else if (existing) {
+        // Update existing row
+        const updateData: Record<string, unknown> = { ...row, updatedAt: now };
         delete updateData.id;
         delete updateData.createdAt;
         delete updateData._sync_op;
-        
+
+        if ('date' in updateData && updateData.date != null) {
+          updateData.date = parseDate(updateData.date);
+        }
+        if ('warrantyStartDate' in updateData && updateData.warrantyStartDate != null) {
+          updateData.warrantyStartDate = parseDate(updateData.warrantyStartDate);
+        }
+        if ('warrantyExpiryDate' in updateData && updateData.warrantyExpiryDate != null) {
+          updateData.warrantyExpiryDate = parseDate(updateData.warrantyExpiryDate);
+        }
+        if ('deletedAt' in updateData) {
+          updateData.deletedAt = parseDate(updateData.deletedAt);
+        }
+
         await db
           .update(table)
           .set(updateData)
           .where(eq(table.id, row.id));
         updated++;
       } else {
-        // Insert new
-        const insertData: Record<string, unknown> = { ...row, createdAt: new Date(), updatedAt: new Date() };
+        // Insert new row (with client-generated UUID id)
+        const insertData: Record<string, unknown> = {
+          ...row,
+          createdAt: parseDate(row.createdAt) ?? now,
+          updatedAt: now,
+        };
         delete insertData._sync_op;
-        
+
+        if ('date' in insertData && insertData.date != null) {
+          insertData.date = parseDate(insertData.date);
+        }
+        if ('warrantyStartDate' in insertData && insertData.warrantyStartDate != null) {
+          insertData.warrantyStartDate = parseDate(insertData.warrantyStartDate);
+        }
+        if ('warrantyExpiryDate' in insertData && insertData.warrantyExpiryDate != null) {
+          insertData.warrantyExpiryDate = parseDate(insertData.warrantyExpiryDate);
+        }
+        if ('deletedAt' in insertData) {
+          insertData.deletedAt = parseDate(insertData.deletedAt);
+        }
+
         await db.insert(table).values(insertData);
         inserted++;
       }

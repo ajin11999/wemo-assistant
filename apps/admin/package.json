@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node scripts/copy-pdfjs-wasm.mjs && vite",
     "build": "node scripts/copy-pdfjs-wasm.mjs && tsc && vite build",
-    "deploy": "bun run build && bunx wrangler pages deploy dist --project-name wemo-assistant-admin",
+    "deploy": "bun run build && CLOUDFLARE_ACCOUNT_ID=bc85c041b478ed7d1d05b64d204a03b1 wrangler pages deploy dist --project-name wemo-assistant-admin --commit-dirty=true",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
@@ -24,6 +24,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "wrangler": "^4.118.0"
   }
 }
