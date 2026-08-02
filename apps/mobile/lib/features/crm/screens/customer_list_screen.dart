@@ -60,13 +60,16 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
   }
 
   void _onSearchChanged() {
-    final query = _searchController.text.toLowerCase();
+    final query = _searchController.text.toLowerCase().trim();
     setState(() {
-      _filteredCustomers = _customers.where((customer) {
-        return customer.name.toLowerCase().contains(query) ||
-               (customer.phone?.toLowerCase().contains(query) ?? false) ||
-               (customer.email?.toLowerCase().contains(query) ?? false);
-      }).toList();
+      if (query.isEmpty) {
+        _filteredCustomers = _customers;
+      } else {
+        _filteredCustomers = _customers.where((customer) {
+          final hay = '${customer.name} ${customer.phone ?? ''} ${customer.phoneAlt ?? ''} ${customer.email ?? ''} ${customer.tag ?? ''} ${customer.address ?? ''}'.toLowerCase();
+          return hay.contains(query);
+        }).toList();
+      }
     });
   }
 
@@ -90,10 +93,18 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
             padding: const EdgeInsets.all(8),
             child: TextField(
               controller: _searchController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 hintText: 'Search customers...',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _searchController.text.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _searchController.clear();
+                        },
+                      ),
+                border: const OutlineInputBorder(),
                 filled: true,
                 fillColor: Colors.white,
               ),

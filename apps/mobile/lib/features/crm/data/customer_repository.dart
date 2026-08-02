@@ -9,30 +9,38 @@ class CustomerRepository {
 
   final AppDatabase db;
 
-  // Get all customers
+  // Get all customers (sorted by last updated)
   Future<List<Customer>> getAllCustomers() async {
-    return await (db.select(db.customers)..orderBy([(t) => OrderingTerm(expression: t.name)])).get();
+    return await (db.select(db.customers)
+      ..where((t) => t.deletedAt.isNull())
+      ..orderBy([(t) => OrderingTerm(expression: t.updatedAt, mode: OrderingMode.desc)]))
+      .get();
   }
 
   // Get customer by ID
   Future<Customer?> getCustomer(String id) async {
-    final query = db.select(db.customers)..where((t) => t.id.equals(id));
+    final query = db.select(db.customers)..where((t) => t.id.equals(id) & t.deletedAt.isNull());
     return await query.getSingleOrNull();
   }
 
-  // Search customers by name, phone, or email
+  // Search customers by name, phone, email, tag, or address
   Future<List<Customer>> searchCustomers(String query) async {
-    if (query.isEmpty) return [];
+    if (query.isEmpty) return getAllCustomers();
     
     final searchPattern = '%$query%';
     final q = db.select(db.customers)
       ..where((t) => 
-        t.name.like(searchPattern) |
-        t.phone.like(searchPattern) |
-        t.email.like(searchPattern)
+        t.deletedAt.isNull() & (
+          t.name.like(searchPattern) |
+          t.phone.like(searchPattern) |
+          t.phoneAlt.like(searchPattern) |
+          t.email.like(searchPattern) |
+          t.tag.like(searchPattern) |
+          t.address.like(searchPattern)
+        )
       )
-      ..orderBy([(t) => OrderingTerm(expression: t.name)])
-      ..limit(20);
+      ..orderBy([(t) => OrderingTerm(expression: t.updatedAt, mode: OrderingMode.desc)])
+      ..limit(50);
     
     return await q.get();
   }
