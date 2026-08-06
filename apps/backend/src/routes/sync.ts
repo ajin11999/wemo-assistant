@@ -157,36 +157,82 @@ syncRoute.get('/', requireClerkRead, async (c) => {
   return c.json({ since, cursor, hasMore, limit, tables });
 });
 
+// Schema column definitions (whitelists allowed keys per table)
+const TABLE_COLUMNS: Record<string, Set<string>> = {
+  customers: new Set([
+    'id', 'name', 'phone', 'phoneAlt', 'email', 'address', 'notes', 'tag',
+    'createdAt', 'updatedAt', 'deletedAt'
+  ]),
+  customerVehicles: new Set([
+    'id', 'customerId', 'machineId', 'licensePlate', 'frameNumber', 'colorId',
+    'year', 'nickname', 'notes', 'createdAt', 'updatedAt', 'deletedAt'
+  ]),
+  maintenanceRecords: new Set([
+    'id', 'customerVehicleId', 'customerId', 'type', 'date', 'description',
+    'technicianId', 'clerkId', 'invoiceNumber', 'totalAmount', 'notes',
+    'createdAt', 'updatedAt', 'deletedAt'
+  ]),
+  maintenanceItems: new Set([
+    'id', 'maintenanceRecordId', 'category', 'partId', 'partNumberId',
+    'partNumber', 'brand', 'quantity', 'hasWarranty', 'warrantyPeriodValue',
+    'warrantyPeriodUnit', 'warrantyStartDate', 'warrantyExpiryDate',
+    'warrantyNotes', 'unitPrice', 'notes', 'sortOrder',
+    'createdAt', 'updatedAt', 'deletedAt'
+  ]),
+};
+
+const parseDate = (v: unknown): Date | null => {
+  if (v == null) return null;
+  if (v instanceof Date) return v;
+  if (typeof v === 'number') return new Date(v);
+  if (typeof v === 'string') {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+};
+
+function sanitizeRow(tableName: string, rawRow: Record<string, unknown>): Record<string, unknown> {
+  const allowedKeys = TABLE_COLUMNS[tableName];
+  const sanitized: Record<string, unknown> = {};
+
+  if (!allowedKeys) return sanitized;
+
+  for (const key of Object.keys(rawRow)) {
+    if (!allowedKeys.has(key)) continue;
+    const value = rawRow[key];
+
+    if (['createdAt', 'updatedAt', 'deletedAt', 'date', 'warrantyStartDate', 'warrantyExpiryDate'].includes(key)) {
+      sanitized[key] = parseDate(value);
+    } else if (key === 'hasWarranty') {
+      sanitized[key] = Boolean(value);
+    } else {
+      sanitized[key] = value;
+    }
+  }
+
+  return sanitized;
+}
+
 // Bidirectional sync: Clerk can POST changes back to the server
 // This endpoint accepts writes to CRM tables from the clerk mobile app
 syncRoute.post('/push', requireClerkWrite, async (c) => {
-  const db = getDb(c.env);
-  const body = await c.req.json().catch(() => null);
+  try {
+    const db = getDb(c.env);
+    const body = await c.req.json().catch(() => null);
 
-  if (!body || typeof body !== 'object') {
-    return c.json({ error: 'invalid request body' }, 400);
-  }
-
-  // Validate that we only have CRM tables (for now)
-  const allowedTables = new Set(['customers', 'customerVehicles', 'maintenanceRecords', 'maintenanceItems']);
-  const tables = body.tables as Record<string, unknown[]> | undefined;
-
-  if (!tables) {
-    return c.json({ error: 'no tables provided' }, 400);
-  }
-
-  const processed: Record<string, { inserted: number; updated: number; deleted: number }> = {};
-
-  for (const [tableName, rows] of Object.entries(tables)) {
-    if (!allowedTables.has(tableName)) {
-      continue; // Skip non-CRM tables for now
+    if (!body || typeof body !== 'object') {
+      return c.json({ error: 'invalid request body' }, 400);
     }
 
-    if (!Array.isArray(rows)) {
-      continue;
+    // Validate that we only have CRM tables (for now)
+    const allowedTables = new Set(['customers', 'customerVehicles', 'maintenanceRecords', 'maintenanceItems']);
+    const tables = body.tables as Record<string, unknown[]> | undefined;
+
+    if (!tables || typeof tables !== 'object') {
+      return c.json({ error: 'no tables provided' }, 400);
     }
 
-    // Get the drizzle table
     const tableMap: Record<string, any> = {
       customers,
       customerVehicles,
@@ -194,101 +240,89 @@ syncRoute.post('/push', requireClerkWrite, async (c) => {
       maintenanceItems,
     };
 
-    const table = tableMap[tableName];
-    if (!table) continue;
+    const processed: Record<string, { inserted: number; updated: number; deleted: number }> = {};
 
-    let inserted = 0;
-    let updated = 0;
-    let deleted = 0;
+    for (const [tableName, rows] of Object.entries(tables)) {
+      if (!allowedTables.has(tableName) || !Array.isArray(rows)) {
+        continue;
+      }
 
-    for (const row of rows as any[]) {
-      if (!row || typeof row !== 'object' || !row.id) continue;
+      const table = tableMap[tableName];
+      if (!table) continue;
 
-      const now = new Date();
-      const isDelete = !!row.deletedAt;
+      let inserted = 0;
+      let updated = 0;
+      let deleted = 0;
 
-      // Check if row already exists in D1
-      const existing = await db
-        .select({ id: table.id })
-        .from(table)
-        .where(eq(table.id, row.id))
-        .get();
+      for (const row of rows as Record<string, unknown>[]) {
+        if (!row || typeof row !== 'object' || !row.id || typeof row.id !== 'string') {
+          continue;
+        }
 
-      const parseDate = (v: unknown) => (v != null ? new Date(v as string | number) : null);
+        const now = new Date();
+        const isDelete = !!row.deletedAt;
 
-      if (isDelete) {
-        const deletedAtDate = parseDate(row.deletedAt) ?? now;
-        if (existing) {
+        // Check if row already exists in D1
+        const existing = await db
+          .select({ id: table.id })
+          .from(table)
+          .where(eq(table.id, row.id))
+          .get();
+
+        if (isDelete) {
+          const deletedAtDate = parseDate(row.deletedAt) ?? now;
+          if (existing) {
+            await db
+              .update(table)
+              .set({ deletedAt: deletedAtDate, updatedAt: now })
+              .where(eq(table.id, row.id));
+          } else {
+            // Row was deleted before server ever saw it; insert tombstone so sync can propagate it
+            const data = sanitizeRow(tableName, row);
+            data.id = row.id;
+            data.createdAt = parseDate(row.createdAt) ?? now;
+            data.updatedAt = now;
+            data.deletedAt = deletedAtDate;
+            await db.insert(table).values(data as any);
+          }
+          deleted++;
+        } else if (existing) {
+          // Update existing row
+          const data = sanitizeRow(tableName, row);
+          delete data.id;
+          delete data.createdAt;
+          data.updatedAt = now;
+
           await db
             .update(table)
-            .set({ deletedAt: deletedAtDate, updatedAt: now })
+            .set(data as any)
             .where(eq(table.id, row.id));
+          updated++;
         } else {
-          // Row was deleted before server ever saw it; insert tombstone so sync can propagate it
-          const tombstoneData: Record<string, unknown> = {
-            ...row,
-            createdAt: now,
-            updatedAt: now,
-            deletedAt: deletedAtDate,
-          };
-          delete tombstoneData._sync_op;
-          await db.insert(table).values(tombstoneData);
-        }
-        deleted++;
-      } else if (existing) {
-        // Update existing row
-        const updateData: Record<string, unknown> = { ...row, updatedAt: now };
-        delete updateData.id;
-        delete updateData.createdAt;
-        delete updateData._sync_op;
+          // Insert new row (with client-generated UUID id)
+          const data = sanitizeRow(tableName, row);
+          data.id = row.id;
+          data.createdAt = parseDate(row.createdAt) ?? now;
+          data.updatedAt = now;
 
-        if ('date' in updateData && updateData.date != null) {
-          updateData.date = parseDate(updateData.date);
+          await db.insert(table).values(data as any);
+          inserted++;
         }
-        if ('warrantyStartDate' in updateData && updateData.warrantyStartDate != null) {
-          updateData.warrantyStartDate = parseDate(updateData.warrantyStartDate);
-        }
-        if ('warrantyExpiryDate' in updateData && updateData.warrantyExpiryDate != null) {
-          updateData.warrantyExpiryDate = parseDate(updateData.warrantyExpiryDate);
-        }
-        if ('deletedAt' in updateData) {
-          updateData.deletedAt = parseDate(updateData.deletedAt);
-        }
-
-        await db
-          .update(table)
-          .set(updateData)
-          .where(eq(table.id, row.id));
-        updated++;
-      } else {
-        // Insert new row (with client-generated UUID id)
-        const insertData: Record<string, unknown> = {
-          ...row,
-          createdAt: parseDate(row.createdAt) ?? now,
-          updatedAt: now,
-        };
-        delete insertData._sync_op;
-
-        if ('date' in insertData && insertData.date != null) {
-          insertData.date = parseDate(insertData.date);
-        }
-        if ('warrantyStartDate' in insertData && insertData.warrantyStartDate != null) {
-          insertData.warrantyStartDate = parseDate(insertData.warrantyStartDate);
-        }
-        if ('warrantyExpiryDate' in insertData && insertData.warrantyExpiryDate != null) {
-          insertData.warrantyExpiryDate = parseDate(insertData.warrantyExpiryDate);
-        }
-        if ('deletedAt' in insertData) {
-          insertData.deletedAt = parseDate(insertData.deletedAt);
-        }
-
-        await db.insert(table).values(insertData);
-        inserted++;
       }
+
+      processed[tableName] = { inserted, updated, deleted };
     }
 
-    processed[tableName] = { inserted, updated, deleted };
+    return c.json({ ok: true, processed });
+  } catch (err: any) {
+    console.error('[sync/push error]:', err);
+    return c.json(
+      {
+        error: 'Failed to push sync changes',
+        details: err?.message || String(err),
+      },
+      500,
+    );
   }
-
-  return c.json({ ok: true, processed });
 });
+

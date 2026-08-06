@@ -130,7 +130,14 @@ class SyncApi {
       throw SyncApiException('Not authorized — check the API key on the Sync screen.');
     }
     if (res.statusCode != 200) {
-      throw SyncApiException('HTTP ${res.statusCode} from $uri');
+      String msg = 'HTTP ${res.statusCode} from $uri';
+      try {
+        final body = jsonDecode(res.body);
+        if (body is Map && body.containsKey('error')) {
+          msg = '${body['error']}${body['details'] != null ? ': ${body['details']}' : ''}';
+        }
+      } catch (_) {}
+      throw SyncApiException(msg);
     }
 
     try {
