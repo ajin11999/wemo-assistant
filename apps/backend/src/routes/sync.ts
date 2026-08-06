@@ -232,18 +232,59 @@ function sanitizeRow(tableName: string, rawRow: Record<string, unknown>): Record
 }
 
 /**
- * Validates optional foreign keys against D1 and current push batch, setting invalid ones to null
- * so SQLite doesn't reject the statement with sqlite_constraint_foreignkey.
+ * Validates foreign keys against D1 and current push batch.
+ * - Optional FKs referencing non-existent rows are set to null so SQLite foreign key constraints pass.
+ * - Required FKs referencing non-existent rows cause validation to return null so the invalid row is skipped.
  */
 async function validateAndSanitizeFks(
   db: any,
+  tableName: string,
   data: Record<string, unknown>,
   pushedIds: Record<string, Set<string>>
-): Promise<Record<string, unknown>> {
+): Promise<Record<string, unknown> | null> {
   const result = { ...data };
 
+  // --- 1. Required FKs (if invalid/missing, row cannot satisfy D1 foreign key constraint) ---
+
+  if (tableName === 'customerVehicles') {
+    if (!result.customerId || typeof result.customerId !== 'string') return null;
+    const custInBatch = pushedIds.customers?.has(result.customerId as string);
+    if (!custInBatch) {
+      const exists = await db.select({ id: customers.id }).from(customers).where(eq(customers.id, result.customerId as string)).get();
+      if (!exists) return null;
+    }
+
+    if (!result.machineId || typeof result.machineId !== 'string') return null;
+    const exists = await db.select({ id: machines.id }).from(machines).where(eq(machines.id, result.machineId as string)).get();
+    if (!exists) return null;
+  }
+
+  if (tableName === 'maintenanceRecords') {
+    if (!result.customerId || typeof result.customerId !== 'string') return null;
+    const custInBatch = pushedIds.customers?.has(result.customerId as string);
+    if (!custInBatch) {
+      const exists = await db.select({ id: customers.id }).from(customers).where(eq(customers.id, result.customerId as string)).get();
+      if (!exists) return null;
+    }
+  }
+
+  if (tableName === 'maintenanceItems') {
+    if (!result.maintenanceRecordId || typeof result.maintenanceRecordId !== 'string') return null;
+    const recInBatch = pushedIds.maintenanceRecords?.has(result.maintenanceRecordId as string);
+    if (!recInBatch) {
+      const exists = await db
+        .select({ id: maintenanceRecords.id })
+        .from(maintenanceRecords)
+        .where(eq(maintenanceRecords.id, result.maintenanceRecordId as string))
+        .get();
+      if (!exists) return null;
+    }
+  }
+
+  // --- 2. Optional / Nullable FKs (if invalid, set to null so SQLite foreign key constraint passes) ---
+
   if (result.colorId && typeof result.colorId === 'string') {
-    const exists = await db.select({ id: colors.id }).from(colors).where(eq(colors.id, result.colorId)).get();
+    const exists = await db.select({ id: colors.id }).from(colors).where(eq(colors.id, result.colorId as string)).get();
     if (!exists) result.colorId = null;
   }
 
@@ -260,22 +301,22 @@ async function validateAndSanitizeFks(
   }
 
   if (result.technicianId && typeof result.technicianId === 'string') {
-    const exists = await db.select({ id: users.id }).from(users).where(eq(users.id, result.technicianId)).get();
+    const exists = await db.select({ id: users.id }).from(users).where(eq(users.id, result.technicianId as string)).get();
     if (!exists) result.technicianId = null;
   }
 
   if (result.clerkId && typeof result.clerkId === 'string') {
-    const exists = await db.select({ id: users.id }).from(users).where(eq(users.id, result.clerkId)).get();
+    const exists = await db.select({ id: users.id }).from(users).where(eq(users.id, result.clerkId as string)).get();
     if (!exists) result.clerkId = null;
   }
 
   if (result.partId && typeof result.partId === 'string') {
-    const exists = await db.select({ id: parts.id }).from(parts).where(eq(parts.id, result.partId)).get();
+    const exists = await db.select({ id: parts.id }).from(parts).where(eq(parts.id, result.partId as string)).get();
     if (!exists) result.partId = null;
   }
 
   if (result.partNumberId && typeof result.partNumberId === 'string') {
-    const exists = await db.select({ id: partNumbers.id }).from(partNumbers).where(eq(partNumbers.id, result.partNumberId)).get();
+    const exists = await db.select({ id: partNumbers.id }).from(partNumbers).where(eq(partNumbers.id, result.partNumberId as string)).get();
     if (!exists) result.partNumberId = null;
   }
 
@@ -333,60 +374,79 @@ syncRoute.post('/push', requireClerkWrite, async (c) => {
           continue;
         }
 
-        const now = new Date();
-        const isDelete = !!row.deletedAt;
+        try {
+          const now = new Date();
+          const isDelete = !!row.deletedAt;
 
-        // Check if row already exists in D1
-        const existing = await db
-          .select({ id: table.id })
-          .from(table)
-          .where(eq(table.id, row.id))
-          .get();
+          // Check if row already exists in D1
+          const existing = await db
+            .select({ id: table.id })
+            .from(table)
+            .where(eq(table.id, row.id))
+            .get();
 
-        if (isDelete) {
-          const deletedAtDate = parseDate(row.deletedAt) ?? now;
-          if (existing) {
+          if (isDelete) {
+            const deletedAtDate = parseDate(row.deletedAt) ?? now;
+            if (existing) {
+              await db
+                .update(table)
+                .set({ deletedAt: deletedAtDate, updatedAt: now })
+                .where(eq(table.id, row.id));
+            } else {
+              // Row was deleted before server ever saw it; insert tombstone so sync can propagate it
+              let data = sanitizeRow(tableName, row);
+              const validated = await validateAndSanitizeFks(db, tableName, data, pushedIds);
+              if (!validated) {
+                console.warn(`[sync/push] Skipping tombstone for ${tableName}/${row.id} due to invalid required FK`);
+                continue;
+              }
+              data = validated;
+              data.id = row.id;
+              data.createdAt = parseDate(row.createdAt) ?? now;
+              data.updatedAt = now;
+              data.deletedAt = deletedAtDate;
+              await db.insert(table).values(data as any);
+            }
+            deleted++;
+          } else if (existing) {
+            // Update existing row
+            let data = sanitizeRow(tableName, row);
+            const validated = await validateAndSanitizeFks(db, tableName, data, pushedIds);
+            if (!validated) {
+              console.warn(`[sync/push] Skipping update for ${tableName}/${row.id} due to invalid required FK`);
+              continue;
+            }
+            data = validated;
+            delete data.id;
+            delete data.createdAt;
+            data.updatedAt = now;
+
             await db
               .update(table)
-              .set({ deletedAt: deletedAtDate, updatedAt: now })
+              .set(data as any)
               .where(eq(table.id, row.id));
+            updated++;
           } else {
-            // Row was deleted before server ever saw it; insert tombstone so sync can propagate it
+            // Insert new row (with client-generated UUID id)
             let data = sanitizeRow(tableName, row);
-            data = await validateAndSanitizeFks(db, data, pushedIds);
+            const validated = await validateAndSanitizeFks(db, tableName, data, pushedIds);
+            if (!validated) {
+              console.warn(`[sync/push] Skipping insert for ${tableName}/${row.id} due to invalid required FK`);
+              continue;
+            }
+            data = validated;
             data.id = row.id;
             data.createdAt = parseDate(row.createdAt) ?? now;
             data.updatedAt = now;
-            data.deletedAt = deletedAtDate;
+
             await db.insert(table).values(data as any);
+            inserted++;
           }
-          deleted++;
-        } else if (existing) {
-          // Update existing row
-          let data = sanitizeRow(tableName, row);
-          data = await validateAndSanitizeFks(db, data, pushedIds);
-          delete data.id;
-          delete data.createdAt;
-          data.updatedAt = now;
 
-          await db
-            .update(table)
-            .set(data as any)
-            .where(eq(table.id, row.id));
-          updated++;
-        } else {
-          // Insert new row (with client-generated UUID id)
-          let data = sanitizeRow(tableName, row);
-          data = await validateAndSanitizeFks(db, data, pushedIds);
-          data.id = row.id;
-          data.createdAt = parseDate(row.createdAt) ?? now;
-          data.updatedAt = now;
-
-          await db.insert(table).values(data as any);
-          inserted++;
+          pushedIds[tableName]?.add(row.id);
+        } catch (rowErr: any) {
+          console.error(`[sync/push] Failed to process row ${row.id} in ${tableName}:`, rowErr?.message || String(rowErr));
         }
-
-        pushedIds[tableName]?.add(row.id);
       }
 
       processed[tableName] = { inserted, updated, deleted };

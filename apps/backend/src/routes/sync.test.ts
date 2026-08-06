@@ -538,6 +538,50 @@ describe('Sync Route Integration Tests', () => {
     expect(deletedCust.deleted_at).not.toBeNull();
   });
 
+  test('POST /sync/push skips rows with invalid required FK references without returning 500 error', async () => {
+    const payload = {
+      tables: {
+        customerVehicles: [
+          {
+            id: 'veh-bad-machine',
+            customerId: 'cust-1', // valid if cust-1 is pushed
+            machineId: 'non-existent-machine', // INVALID
+            licensePlate: 'B 9999 ERR',
+          },
+        ],
+        maintenanceRecords: [
+          {
+            id: 'rec-bad-cust',
+            customerId: 'non-existent-customer', // INVALID
+            type: 'service',
+            description: 'Invalid Customer Test',
+          },
+        ],
+        maintenanceItems: [
+          {
+            id: 'item-bad-rec',
+            maintenanceRecordId: 'non-existent-record', // INVALID
+            category: 'oil',
+            quantity: 1,
+          },
+        ],
+      },
+    };
+
+    const res = await app.request('/sync/push', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.processed.customerVehicles).toEqual({ inserted: 0, updated: 0, deleted: 0 });
+    expect(body.processed.maintenanceRecords).toEqual({ inserted: 0, updated: 0, deleted: 0 });
+    expect(body.processed.maintenanceItems).toEqual({ inserted: 0, updated: 0, deleted: 0 });
+  });
+
   test('GET /sync returns synced tables and pagination delta cursor', async () => {
     // Seed database
     testDb.sqlite.run(`
