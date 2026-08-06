@@ -135,7 +135,7 @@ class SyncRepository {
     // 1. Customers
     final custQuery = db.select(db.customers);
     if (since != null) {
-      custQuery.where((t) => t.updatedAt.isGreaterThanValue(since));
+      custQuery.where((t) => t.updatedAt.isBiggerThanValue(since));
     }
     final custRows = await custQuery.get();
     if (custRows.isNotEmpty) {
@@ -156,7 +156,7 @@ class SyncRepository {
     // 2. CustomerVehicles
     final vehicleQuery = db.select(db.customerVehicles);
     if (since != null) {
-      vehicleQuery.where((t) => t.updatedAt.isGreaterThanValue(since));
+      vehicleQuery.where((t) => t.updatedAt.isBiggerThanValue(since));
     }
     final vehicleRows = await vehicleQuery.get();
     if (vehicleRows.isNotEmpty) {
@@ -178,7 +178,7 @@ class SyncRepository {
     // 3. MaintenanceRecords
     final recQuery = db.select(db.maintenanceRecords);
     if (since != null) {
-      recQuery.where((t) => t.updatedAt.isGreaterThanValue(since));
+      recQuery.where((t) => t.updatedAt.isBiggerThanValue(since));
     }
     final recRows = await recQuery.get();
     if (recRows.isNotEmpty) {
@@ -202,7 +202,7 @@ class SyncRepository {
     // 4. MaintenanceItems
     final itemQuery = db.select(db.maintenanceItems);
     if (since != null) {
-      itemQuery.where((t) => t.updatedAt.isGreaterThanValue(since));
+      itemQuery.where((t) => t.updatedAt.isBiggerThanValue(since));
     }
     final itemRows = await itemQuery.get();
     if (itemRows.isNotEmpty) {
