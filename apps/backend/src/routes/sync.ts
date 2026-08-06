@@ -22,6 +22,7 @@ import {
   customerVehicles,
   maintenanceRecords,
   maintenanceItems,
+  users,
 } from '../db/schema';
 
 export const syncRoute = new Hono<{ Bindings: Bindings }>();
@@ -181,6 +182,18 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
   ]),
 };
 
+const FK_FIELDS = new Set([
+  'customerId',
+  'machineId',
+  'colorId',
+  'customerVehicleId',
+  'technicianId',
+  'clerkId',
+  'partId',
+  'partNumberId',
+  'maintenanceRecordId',
+]);
+
 const parseDate = (v: unknown): Date | null => {
   if (v == null) return null;
   if (v instanceof Date) return v;
@@ -200,7 +213,11 @@ function sanitizeRow(tableName: string, rawRow: Record<string, unknown>): Record
 
   for (const key of Object.keys(rawRow)) {
     if (!allowedKeys.has(key)) continue;
-    const value = rawRow[key];
+    let value = rawRow[key];
+
+    if (FK_FIELDS.has(key) && typeof value === 'string' && value.trim() === '') {
+      value = null;
+    }
 
     if (['createdAt', 'updatedAt', 'deletedAt', 'date', 'warrantyStartDate', 'warrantyExpiryDate'].includes(key)) {
       sanitized[key] = parseDate(value);
@@ -214,6 +231,60 @@ function sanitizeRow(tableName: string, rawRow: Record<string, unknown>): Record
   return sanitized;
 }
 
+/**
+ * Validates optional foreign keys against D1 and current push batch, setting invalid ones to null
+ * so SQLite doesn't reject the statement with sqlite_constraint_foreignkey.
+ */
+async function validateAndSanitizeFks(
+  db: any,
+  data: Record<string, unknown>,
+  pushedIds: Record<string, Set<string>>
+): Promise<Record<string, unknown>> {
+  const result = { ...data };
+
+  if (result.colorId && typeof result.colorId === 'string') {
+    const exists = await db.select({ id: colors.id }).from(colors).where(eq(colors.id, result.colorId)).get();
+    if (!exists) result.colorId = null;
+  }
+
+  if (result.customerVehicleId && typeof result.customerVehicleId === 'string') {
+    const inBatch = pushedIds.customerVehicles?.has(result.customerVehicleId as string);
+    if (!inBatch) {
+      const exists = await db
+        .select({ id: customerVehicles.id })
+        .from(customerVehicles)
+        .where(eq(customerVehicles.id, result.customerVehicleId as string))
+        .get();
+      if (!exists) result.customerVehicleId = null;
+    }
+  }
+
+  if (result.technicianId && typeof result.technicianId === 'string') {
+    const exists = await db.select({ id: users.id }).from(users).where(eq(users.id, result.technicianId)).get();
+    if (!exists) result.technicianId = null;
+  }
+
+  if (result.clerkId && typeof result.clerkId === 'string') {
+    const exists = await db.select({ id: users.id }).from(users).where(eq(users.id, result.clerkId)).get();
+    if (!exists) result.clerkId = null;
+  }
+
+  if (result.partId && typeof result.partId === 'string') {
+    const exists = await db.select({ id: parts.id }).from(parts).where(eq(parts.id, result.partId)).get();
+    if (!exists) result.partId = null;
+  }
+
+  if (result.partNumberId && typeof result.partNumberId === 'string') {
+    const exists = await db.select({ id: partNumbers.id }).from(partNumbers).where(eq(partNumbers.id, result.partNumberId)).get();
+    if (!exists) result.partNumberId = null;
+  }
+
+  return result;
+}
+
+// Fixed dependency order for push processing (parents before children)
+const PUSH_TABLE_ORDER = ['customers', 'customerVehicles', 'maintenanceRecords', 'maintenanceItems'];
+
 // Bidirectional sync: Clerk can POST changes back to the server
 // This endpoint accepts writes to CRM tables from the clerk mobile app
 syncRoute.post('/push', requireClerkWrite, async (c) => {
@@ -225,8 +296,6 @@ syncRoute.post('/push', requireClerkWrite, async (c) => {
       return c.json({ error: 'invalid request body' }, 400);
     }
 
-    // Validate that we only have CRM tables (for now)
-    const allowedTables = new Set(['customers', 'customerVehicles', 'maintenanceRecords', 'maintenanceItems']);
     const tables = body.tables as Record<string, unknown[]> | undefined;
 
     if (!tables || typeof tables !== 'object') {
@@ -241,11 +310,16 @@ syncRoute.post('/push', requireClerkWrite, async (c) => {
     };
 
     const processed: Record<string, { inserted: number; updated: number; deleted: number }> = {};
+    const pushedIds: Record<string, Set<string>> = {
+      customers: new Set(),
+      customerVehicles: new Set(),
+      maintenanceRecords: new Set(),
+      maintenanceItems: new Set(),
+    };
 
-    for (const [tableName, rows] of Object.entries(tables)) {
-      if (!allowedTables.has(tableName) || !Array.isArray(rows)) {
-        continue;
-      }
+    for (const tableName of PUSH_TABLE_ORDER) {
+      const rows = tables[tableName];
+      if (!Array.isArray(rows)) continue;
 
       const table = tableMap[tableName];
       if (!table) continue;
@@ -278,7 +352,8 @@ syncRoute.post('/push', requireClerkWrite, async (c) => {
               .where(eq(table.id, row.id));
           } else {
             // Row was deleted before server ever saw it; insert tombstone so sync can propagate it
-            const data = sanitizeRow(tableName, row);
+            let data = sanitizeRow(tableName, row);
+            data = await validateAndSanitizeFks(db, data, pushedIds);
             data.id = row.id;
             data.createdAt = parseDate(row.createdAt) ?? now;
             data.updatedAt = now;
@@ -288,7 +363,8 @@ syncRoute.post('/push', requireClerkWrite, async (c) => {
           deleted++;
         } else if (existing) {
           // Update existing row
-          const data = sanitizeRow(tableName, row);
+          let data = sanitizeRow(tableName, row);
+          data = await validateAndSanitizeFks(db, data, pushedIds);
           delete data.id;
           delete data.createdAt;
           data.updatedAt = now;
@@ -300,7 +376,8 @@ syncRoute.post('/push', requireClerkWrite, async (c) => {
           updated++;
         } else {
           // Insert new row (with client-generated UUID id)
-          const data = sanitizeRow(tableName, row);
+          let data = sanitizeRow(tableName, row);
+          data = await validateAndSanitizeFks(db, data, pushedIds);
           data.id = row.id;
           data.createdAt = parseDate(row.createdAt) ?? now;
           data.updatedAt = now;
@@ -308,6 +385,8 @@ syncRoute.post('/push', requireClerkWrite, async (c) => {
           await db.insert(table).values(data as any);
           inserted++;
         }
+
+        pushedIds[tableName]?.add(row.id);
       }
 
       processed[tableName] = { inserted, updated, deleted };
@@ -325,4 +404,5 @@ syncRoute.post('/push', requireClerkWrite, async (c) => {
     );
   }
 });
+
 
