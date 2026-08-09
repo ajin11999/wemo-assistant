@@ -28,29 +28,27 @@ import {
 export const syncRoute = new Hono<{ Bindings: Bindings }>();
 
 // Catalog tables + CRM tables the clerk replica needs (everything except `users`). 
-// Order is FIXED — pagination walks the tables in this sequence, so it must not change 
-// between requests. CRM tables added at the end to maintain backward compatibility.
+// Order is FIXED to canonical FK-parent-first order — pagination walks the tables in this sequence,
+// ensuring parent rows are synced before child rows.
 // Typed loosely because they are aggregated in one loop; each has `updated_at` + `id`.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const SYNC_TABLES: { name: string; table: any }[] = [
-  // Catalog tables (original sync order - do not change)
   { name: 'machines', table: machines },
+  { name: 'parts', table: parts },
+  { name: 'customers', table: customers },
   { name: 'machineVariants', table: machineVariants },
   { name: 'colors', table: colors },
   { name: 'assemblies', table: assemblies },
+  { name: 'partNumbers', table: partNumbers },
+  { name: 'aliases', table: aliases },
+  { name: 'partSubstitutes', table: partSubstitutes },
+  { name: 'partColorVariants', table: partColorVariants },
   { name: 'assemblyItems', table: assemblyItems },
+  { name: 'assemblyLinks', table: assemblyLinks },
+  { name: 'serviceItems', table: serviceItems },
+  { name: 'customerVehicles', table: customerVehicles },
   { name: 'itemResolutions', table: itemResolutions },
   { name: 'dots', table: dots },
-  { name: 'assemblyLinks', table: assemblyLinks },
-  { name: 'parts', table: parts },
-  { name: 'partNumbers', table: partNumbers },
-  { name: 'partColorVariants', table: partColorVariants },
-  { name: 'aliases', table: aliases },
-  { name: 'serviceItems', table: serviceItems },
-  { name: 'partSubstitutes', table: partSubstitutes },
-  // CRM tables (bidirectional sync - clerk can write)
-  { name: 'customers', table: customers },
-  { name: 'customerVehicles', table: customerVehicles },
   { name: 'maintenanceRecords', table: maintenanceRecords },
   { name: 'maintenanceItems', table: maintenanceItems },
 ];
@@ -244,81 +242,72 @@ async function validateAndSanitizeFks(
 ): Promise<Record<string, unknown> | null> {
   const result = { ...data };
 
-  // --- 1. Required FKs (if invalid/missing, row cannot satisfy D1 foreign key constraint) ---
-
-  if (tableName === 'customerVehicles') {
-    if (!result.customerId || typeof result.customerId !== 'string') return null;
-    const custInBatch = pushedIds.customers?.has(result.customerId as string);
-    if (!custInBatch) {
-      const exists = await db.select({ id: customers.id }).from(customers).where(eq(customers.id, result.customerId as string)).get();
-      if (!exists) return null;
+  async function sanitizeOptionalFk(
+    fieldName: string,
+    refTable: any,
+    batchKey?: string
+  ) {
+    const rawVal = result[fieldName];
+    if (rawVal == null) return;
+    if (typeof rawVal !== 'string' || !rawVal.trim()) {
+      result[fieldName] = null;
+      return;
     }
+    const val = rawVal.trim();
+    if (batchKey && pushedIds[batchKey]?.has(val)) {
+      result[fieldName] = val;
+      return;
+    }
+    const exists = await db
+      .select({ id: refTable.id })
+      .from(refTable)
+      .where(eq(refTable.id, val))
+      .get();
+    if (exists) {
+      result[fieldName] = val;
+    } else {
+      result[fieldName] = null;
+    }
+  }
 
-    if (!result.machineId || typeof result.machineId !== 'string') return null;
-    const exists = await db.select({ id: machines.id }).from(machines).where(eq(machines.id, result.machineId as string)).get();
-    if (!exists) return null;
+  async function checkRequiredFk(
+    fieldName: string,
+    refTable: any,
+    batchKey?: string
+  ): Promise<boolean> {
+    const rawVal = result[fieldName];
+    if (typeof rawVal !== 'string' || !rawVal.trim()) return false;
+    const val = rawVal.trim();
+    if (batchKey && pushedIds[batchKey]?.has(val)) return true;
+    const exists = await db
+      .select({ id: refTable.id })
+      .from(refTable)
+      .where(eq(refTable.id, val))
+      .get();
+    return !!exists;
+  }
+
+  // --- 1. Required FKs ---
+  if (tableName === 'customerVehicles') {
+    if (!(await checkRequiredFk('customerId', customers, 'customers'))) return null;
+    if (!(await checkRequiredFk('machineId', machines))) return null;
   }
 
   if (tableName === 'maintenanceRecords') {
-    if (!result.customerId || typeof result.customerId !== 'string') return null;
-    const custInBatch = pushedIds.customers?.has(result.customerId as string);
-    if (!custInBatch) {
-      const exists = await db.select({ id: customers.id }).from(customers).where(eq(customers.id, result.customerId as string)).get();
-      if (!exists) return null;
-    }
+    if (!(await checkRequiredFk('customerId', customers, 'customers'))) return null;
   }
 
   if (tableName === 'maintenanceItems') {
-    if (!result.maintenanceRecordId || typeof result.maintenanceRecordId !== 'string') return null;
-    const recInBatch = pushedIds.maintenanceRecords?.has(result.maintenanceRecordId as string);
-    if (!recInBatch) {
-      const exists = await db
-        .select({ id: maintenanceRecords.id })
-        .from(maintenanceRecords)
-        .where(eq(maintenanceRecords.id, result.maintenanceRecordId as string))
-        .get();
-      if (!exists) return null;
-    }
+    if (!(await checkRequiredFk('maintenanceRecordId', maintenanceRecords, 'maintenanceRecords'))) return null;
   }
 
-  // --- 2. Optional / Nullable FKs (if invalid, set to null so SQLite foreign key constraint passes) ---
-
-  if (result.colorId && typeof result.colorId === 'string') {
-    const exists = await db.select({ id: colors.id }).from(colors).where(eq(colors.id, result.colorId as string)).get();
-    if (!exists) result.colorId = null;
-  }
-
-  if (result.customerVehicleId && typeof result.customerVehicleId === 'string') {
-    const inBatch = pushedIds.customerVehicles?.has(result.customerVehicleId as string);
-    if (!inBatch) {
-      const exists = await db
-        .select({ id: customerVehicles.id })
-        .from(customerVehicles)
-        .where(eq(customerVehicles.id, result.customerVehicleId as string))
-        .get();
-      if (!exists) result.customerVehicleId = null;
-    }
-  }
-
-  if (result.technicianId && typeof result.technicianId === 'string') {
-    const exists = await db.select({ id: users.id }).from(users).where(eq(users.id, result.technicianId as string)).get();
-    if (!exists) result.technicianId = null;
-  }
-
-  if (result.clerkId && typeof result.clerkId === 'string') {
-    const exists = await db.select({ id: users.id }).from(users).where(eq(users.id, result.clerkId as string)).get();
-    if (!exists) result.clerkId = null;
-  }
-
-  if (result.partId && typeof result.partId === 'string') {
-    const exists = await db.select({ id: parts.id }).from(parts).where(eq(parts.id, result.partId as string)).get();
-    if (!exists) result.partId = null;
-  }
-
-  if (result.partNumberId && typeof result.partNumberId === 'string') {
-    const exists = await db.select({ id: partNumbers.id }).from(partNumbers).where(eq(partNumbers.id, result.partNumberId as string)).get();
-    if (!exists) result.partNumberId = null;
-  }
+  // --- 2. Optional / Nullable FKs ---
+  await sanitizeOptionalFk('colorId', colors);
+  await sanitizeOptionalFk('customerVehicleId', customerVehicles, 'customerVehicles');
+  await sanitizeOptionalFk('technicianId', users);
+  await sanitizeOptionalFk('clerkId', users);
+  await sanitizeOptionalFk('partId', parts);
+  await sanitizeOptionalFk('partNumberId', partNumbers);
 
   return result;
 }

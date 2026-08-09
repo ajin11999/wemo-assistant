@@ -47,71 +47,85 @@ class SyncRepository {
 
   // --- Apply a page ---------------------------------------------------------
 
+  static const _canonicalOrder = [
+    'machines',
+    'parts',
+    'customers',
+    'machineVariants',
+    'colors',
+    'assemblies',
+    'partNumbers',
+    'aliases',
+    'partSubstitutes',
+    'partColorVariants',
+    'assemblyItems',
+    'assemblyLinks',
+    'serviceItems',
+    'customerVehicles',
+    'itemResolutions',
+    'dots',
+    'maintenanceRecords',
+    'maintenanceItems',
+  ];
+
   Future<void> applyPage(Map<String, List<Map<String, dynamic>>> tables) async {
     await db.transaction(() async {
-      for (final entry in tables.entries) {
-        await _applyTable(entry.key, entry.value);
+      final tableNamesInPage = tables.keys.toList();
+      final orderedNames = <String>[
+        ..._canonicalOrder.where((name) => tableNamesInPage.contains(name)),
+        ...tableNamesInPage.where((name) => !_canonicalOrder.contains(name)),
+      ];
+
+      // Phase 1: Deletes in reverse order (children before parents)
+      for (final name in orderedNames.reversed) {
+        final rows = tables[name];
+        if (rows != null && rows.isNotEmpty) {
+          await _applyDeletesOnly(name, rows);
+        }
+      }
+
+      // Phase 2: Upserts in forward order (parents before children)
+      for (final name in orderedNames) {
+        final rows = tables[name];
+        if (rows != null && rows.isNotEmpty) {
+          await _applyUpsertsOnly(name, rows);
+        }
       }
     });
   }
 
-  Future<void> _applyTable(String name, List<Map<String, dynamic>> rows) async {
+  TableInfo? _getTableInfo(String name) {
     switch (name) {
-      case 'machines':
-        return _apply(db.machines, rows, _machine);
-      case 'machineVariants':
-        return _apply(db.machineVariants, rows, _machineVariant);
-      case 'colors':
-        return _apply(db.colors, rows, _color);
-      case 'assemblies':
-        return _apply(db.assemblies, rows, _assembly);
-      case 'assemblyItems':
-        return _apply(db.assemblyItems, rows, _assemblyItem);
-      case 'itemResolutions':
-        return _apply(db.itemResolutions, rows, _itemResolution);
-      case 'dots':
-        return _apply(db.dots, rows, _dot);
-      case 'assemblyLinks':
-        return _apply(db.assemblyLinks, rows, _assemblyLink);
-      case 'parts':
-        return _apply(db.parts, rows, _part);
-      case 'partNumbers':
-        return _apply(db.partNumbers, rows, _partNumber);
-      case 'partColorVariants':
-        return _apply(db.partColorVariants, rows, _partColorVariant);
-      case 'aliases':
-        return _apply(db.aliases, rows, _alias);
-      case 'serviceItems':
-        return _apply(db.serviceItems, rows, _serviceItem);
-      case 'partSubstitutes':
-        return _apply(db.partSubstitutes, rows, _partSubstitute);
-      // CRM tables
-      case 'customers':
-        return _apply(db.customers, rows, _customer);
-      case 'customerVehicles':
-        return _apply(db.customerVehicles, rows, _customerVehicle);
-      case 'maintenanceRecords':
-        return _apply(db.maintenanceRecords, rows, _maintenanceRecord);
-      case 'maintenanceItems':
-        return _apply(db.maintenanceItems, rows, _maintenanceItem);
-      default:
-        return; // unknown table (forward-compat): ignore
+      case 'machines': return db.machines;
+      case 'machineVariants': return db.machineVariants;
+      case 'colors': return db.colors;
+      case 'assemblies': return db.assemblies;
+      case 'assemblyItems': return db.assemblyItems;
+      case 'itemResolutions': return db.itemResolutions;
+      case 'dots': return db.dots;
+      case 'assemblyLinks': return db.assemblyLinks;
+      case 'parts': return db.parts;
+      case 'partNumbers': return db.partNumbers;
+      case 'partColorVariants': return db.partColorVariants;
+      case 'aliases': return db.aliases;
+      case 'serviceItems': return db.serviceItems;
+      case 'partSubstitutes': return db.partSubstitutes;
+      case 'customers': return db.customers;
+      case 'customerVehicles': return db.customerVehicles;
+      case 'maintenanceRecords': return db.maintenanceRecords;
+      case 'maintenanceItems': return db.maintenanceItems;
+      default: return null;
     }
   }
 
-  /// Split a table's rows into deletes + upserts and apply both.
-  Future<void> _apply<T extends Table, D>(
-    TableInfo<T, D> table,
-    List<Map<String, dynamic>> rows,
-    Insertable<D> Function(Map<String, dynamic>) toRow,
-  ) async {
-    final upserts = <Insertable<D>>[];
+  Future<void> _applyDeletesOnly(String name, List<Map<String, dynamic>> rows) async {
+    final table = _getTableInfo(name);
+    if (table == null) return;
+
     final deleteIds = <String>[];
     for (final r in rows) {
-      if (r['deletedAt'] != null) {
+      if (r['deletedAt'] != null && r['id'] is String) {
         deleteIds.add(r['id'] as String);
-      } else {
-        upserts.add(toRow(r));
       }
     }
 
@@ -121,6 +135,43 @@ class SyncRepository {
         'DELETE FROM ${table.actualTableName} WHERE id IN ($placeholders)',
         deleteIds,
       );
+    }
+  }
+
+  Future<void> _applyUpsertsOnly(String name, List<Map<String, dynamic>> rows) async {
+    switch (name) {
+      case 'machines': return _upsertOnly(db.machines, rows, _machine);
+      case 'machineVariants': return _upsertOnly(db.machineVariants, rows, _machineVariant);
+      case 'colors': return _upsertOnly(db.colors, rows, _color);
+      case 'assemblies': return _upsertOnly(db.assemblies, rows, _assembly);
+      case 'assemblyItems': return _upsertOnly(db.assemblyItems, rows, _assemblyItem);
+      case 'itemResolutions': return _upsertOnly(db.itemResolutions, rows, _itemResolution);
+      case 'dots': return _upsertOnly(db.dots, rows, _dot);
+      case 'assemblyLinks': return _upsertOnly(db.assemblyLinks, rows, _assemblyLink);
+      case 'parts': return _upsertOnly(db.parts, rows, _part);
+      case 'partNumbers': return _upsertOnly(db.partNumbers, rows, _partNumber);
+      case 'partColorVariants': return _upsertOnly(db.partColorVariants, rows, _partColorVariant);
+      case 'aliases': return _upsertOnly(db.aliases, rows, _alias);
+      case 'serviceItems': return _upsertOnly(db.serviceItems, rows, _serviceItem);
+      case 'partSubstitutes': return _upsertOnly(db.partSubstitutes, rows, _partSubstitute);
+      case 'customers': return _upsertOnly(db.customers, rows, _customer);
+      case 'customerVehicles': return _upsertOnly(db.customerVehicles, rows, _customerVehicle);
+      case 'maintenanceRecords': return _upsertOnly(db.maintenanceRecords, rows, _maintenanceRecord);
+      case 'maintenanceItems': return _upsertOnly(db.maintenanceItems, rows, _maintenanceItem);
+      default: return;
+    }
+  }
+
+  Future<void> _upsertOnly<T extends Table, D>(
+    TableInfo<T, D> table,
+    List<Map<String, dynamic>> rows,
+    Insertable<D> Function(Map<String, dynamic>) toRow,
+  ) async {
+    final upserts = <Insertable<D>>[];
+    for (final r in rows) {
+      if (r['deletedAt'] == null) {
+        upserts.add(toRow(r));
+      }
     }
     if (upserts.isNotEmpty) {
       await db.batch((b) => b.insertAllOnConflictUpdate(table, upserts));

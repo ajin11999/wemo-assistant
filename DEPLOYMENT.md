@@ -341,15 +341,15 @@ update the value in the client that uses it. No redeploy needed for secret chang
 Once the one-time setup above is done, shipping changes is just running these from the **project root**:
 
 ```bash
-# Backend & Admin web (all at once)
-bun run deploy:all
+# Backend & Admin web (all at once — note: use npm as Wrangler requires Node.js)
+npm run deploy:all
 
 # OR individually
-bun run deploy:backend
-bun run deploy:admin
+npm run deploy:backend
+npm run deploy:admin
 
 # ONLY if the schema changed, run this first:
-bun run db:migrate:remote
+npm run db:migrate:remote
 
 # Mobile (from apps/mobile) — then re-sideload the APK
 cd apps/mobile

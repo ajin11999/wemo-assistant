@@ -582,7 +582,7 @@ describe('Sync Route Integration Tests', () => {
     expect(body.processed.maintenanceItems).toEqual({ inserted: 0, updated: 0, deleted: 0 });
   });
 
-  test('GET /sync returns synced tables and pagination delta cursor', async () => {
+  test('GET /sync returns synced tables in canonical parent-first order', async () => {
     // Seed database
     testDb.sqlite.run(`
       INSERT INTO customers (id, name, created_at, updated_at)
@@ -600,5 +600,67 @@ describe('Sync Route Integration Tests', () => {
     expect(body.tables.customers).toBeDefined();
     expect(body.tables.customers.length).toBe(1);
     expect(body.tables.customers[0].id).toBe('cust-10');
+
+    // Verify key ordering in returned tables object (machines -> parts -> customers)
+    const tableKeys = Object.keys(body.tables);
+    const partsIdx = tableKeys.indexOf('parts');
+    const itemsIdx = tableKeys.indexOf('assemblyItems');
+    expect(partsIdx).toBeLessThan(itemsIdx);
+  });
+
+  test('POST /sync/push sanitizes non-string or whitespace FK values to null without FK errors', async () => {
+    const payload = {
+      tables: {
+        customers: [{ id: 'cust-fk-edge', name: 'FK Edge Test' }],
+        customerVehicles: [
+          {
+            id: 'veh-fk-edge',
+            customerId: 'cust-fk-edge',
+            machineId: 'm1',
+            colorId: 12345, // non-string
+          },
+        ],
+        maintenanceRecords: [
+          {
+            id: 'rec-fk-edge',
+            customerId: 'cust-fk-edge',
+            customerVehicleId: 'veh-fk-edge',
+            type: 'service',
+            description: 'Edge case test',
+            technicianId: '   ', // spaces
+            clerkId: null,
+          },
+        ],
+        maintenanceItems: [
+          {
+            id: 'item-fk-edge',
+            maintenanceRecordId: 'rec-fk-edge',
+            category: 'oil',
+            partId: 'non-existent-part',
+            partNumberId: '',
+          },
+        ],
+      },
+    };
+
+    const res = await app.request('/sync/push', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.ok).toBe(true);
+
+    const veh = testDb.sqlite.prepare('SELECT * FROM customer_vehicles WHERE id = ?').get('veh-fk-edge') as any;
+    expect(veh.color_id).toBeNull();
+
+    const rec = testDb.sqlite.prepare('SELECT * FROM maintenance_records WHERE id = ?').get('rec-fk-edge') as any;
+    expect(rec.technician_id).toBeNull();
+
+    const item = testDb.sqlite.prepare('SELECT * FROM maintenance_items WHERE id = ?').get('item-fk-edge') as any;
+    expect(item.part_id).toBeNull();
+    expect(item.part_number_id).toBeNull();
   });
 });

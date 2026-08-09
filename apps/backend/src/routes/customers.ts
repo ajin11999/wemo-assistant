@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Bindings } from '../bindings';
 import { getDb } from '../db/client';
-import { customers, customerVehicles, maintenanceRecords } from '../db/schema';
+import { colors, customers, customerVehicles, machines, maintenanceRecords } from '../db/schema';
 import { requireClerkWrite, requireClerkRead } from '../middleware/auth';
 
 export const customersRoute = new Hono<{ Bindings: Bindings }>();
@@ -104,8 +104,34 @@ customersRoute.delete('/:id', requireClerkWrite, async (c) => {
 customersRoute.post('/:id/vehicles', requireClerkWrite, async (c) => {
   const customerId = c.req.param('id');
   const body = await c.req.json().catch(() => null);
-  if (!body?.machineId) return c.json({ error: 'machineId is required' }, 400);
+  const machineId = typeof body?.machineId === 'string' ? body.machineId.trim() : null;
+  if (!machineId) return c.json({ error: 'machineId is required' }, 400);
+
   const db = getDb(c.env);
-  const [row] = await db.insert(customerVehicles).values({ customerId, machineId: body.machineId }).returning();
+  const cust = await db.select({ id: customers.id }).from(customers).where(eq(customers.id, customerId)).get();
+  if (!cust) return c.json({ error: 'customer not found' }, 404);
+
+  const mach = await db.select({ id: machines.id }).from(machines).where(eq(machines.id, machineId)).get();
+  if (!mach) return c.json({ error: 'machine not found' }, 400);
+
+  let colorId: string | null = typeof body?.colorId === 'string' && body.colorId.trim() ? body.colorId.trim() : null;
+  if (colorId) {
+    const col = await db.select({ id: colors.id }).from(colors).where(eq(colors.id, colorId)).get();
+    if (!col) colorId = null;
+  }
+
+  const [row] = await db
+    .insert(customerVehicles)
+    .values({
+      customerId,
+      machineId,
+      colorId,
+      licensePlate: typeof body?.licensePlate === 'string' && body.licensePlate.trim() ? body.licensePlate.trim() : null,
+      frameNumber: typeof body?.frameNumber === 'string' && body.frameNumber.trim() ? body.frameNumber.trim() : null,
+      year: typeof body?.year === 'number' ? body.year : null,
+      nickname: typeof body?.nickname === 'string' && body.nickname.trim() ? body.nickname.trim() : null,
+      notes: typeof body?.notes === 'string' && body.notes.trim() ? body.notes.trim() : null,
+    })
+    .returning();
   return c.json(row, 201);
 });

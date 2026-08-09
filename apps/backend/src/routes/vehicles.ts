@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Bindings } from '../bindings';
 import { getDb } from '../db/client';
-import { customerVehicles, customers, machines, maintenanceRecords } from '../db/schema';
+import { colors, customerVehicles, customers, machines, maintenanceRecords } from '../db/schema';
 import { requireClerkWrite, requireClerkRead } from '../middleware/auth';
 
 export const vehiclesRoute = new Hono<{ Bindings: Bindings }>();
@@ -81,15 +81,29 @@ vehiclesRoute.put('/:id', requireClerkWrite, async (c) => {
   const existing = await db.select({ id: customerVehicles.id }).from(customerVehicles).where(eq(customerVehicles.id, id)).get();
   if (!existing) return c.json({ error: 'not found' }, 404);
 
-  // Only allow known columns — strip id, timestamps, and other noise (same pattern as records PUT)
   const allowedCols = ['customerId', 'machineId', 'licensePlate', 'frameNumber', 'colorId', 'year', 'nickname', 'notes'] as const;
   const updateData: Record<string, unknown> = {};
   for (const col of allowedCols) {
     if (col in body) {
-      updateData[col] = (body as Record<string, unknown>)[col] ?? null;
+      let val = (body as Record<string, unknown>)[col];
+      if (typeof val === 'string' && val.trim() === '') val = null;
+      updateData[col] = val ?? null;
     }
   }
-  // Always bump updatedAt
+
+  if (updateData.customerId) {
+    const cust = await db.select({ id: customers.id }).from(customers).where(eq(customers.id, updateData.customerId as string)).get();
+    if (!cust) return c.json({ error: 'customer not found' }, 400);
+  }
+  if (updateData.machineId) {
+    const mach = await db.select({ id: machines.id }).from(machines).where(eq(machines.id, updateData.machineId as string)).get();
+    if (!mach) return c.json({ error: 'machine not found' }, 400);
+  }
+  if (updateData.colorId) {
+    const col = await db.select({ id: colors.id }).from(colors).where(eq(colors.id, updateData.colorId as string)).get();
+    if (!col) updateData.colorId = null;
+  }
+
   updateData.updatedAt = new Date();
 
   const [row] = await db.update(customerVehicles).set(updateData).where(eq(customerVehicles.id, id)).returning();

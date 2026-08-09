@@ -5,10 +5,10 @@
     "apps/*"
   ],
   "scripts": {
-    "deploy:backend": "bun run --cwd apps/backend deploy",
-    "deploy:admin": "bun run --cwd apps/admin deploy",
-    "deploy:all": "bun run deploy:backend && bun run deploy:admin",
-    "db:migrate:remote": "bun run --cwd apps/backend db:migrate:remote",
+    "deploy:backend": "npm run --prefix apps/backend deploy",
+    "deploy:admin": "npm run --prefix apps/admin deploy",
+    "deploy:all": "npm run deploy:backend && npm run deploy:admin",
+    "db:migrate:remote": "npm run --prefix apps/backend db:migrate:remote",
     "dev:backend": "bun run --cwd apps/backend dev",
     "dev:admin": "bun run --cwd apps/admin dev"
   }

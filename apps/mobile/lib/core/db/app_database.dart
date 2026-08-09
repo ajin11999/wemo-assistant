@@ -52,27 +52,26 @@ class AppDatabase extends _$AppDatabase {
     },
   );
 
-  /// The 14 mirrored catalog tables, keyed by the name the sync API uses
+  /// The 18 mirrored catalog + CRM tables, keyed by the name the sync API uses
   /// (see apps/backend/src/routes/sync.ts `SYNC_TABLES`). Order matches the
-  /// server so a full sync inserts parents before children where it matters.
+  /// canonical parent-first sequence so a full sync inserts parents before children.
   Map<String, TableInfo> get syncTables => {
     'machines': machines,
+    'parts': parts,
+    'customers': customers,
     'machineVariants': machineVariants,
     'colors': colors,
     'assemblies': assemblies,
+    'partNumbers': partNumbers,
+    'aliases': aliases,
+    'partSubstitutes': partSubstitutes,
+    'partColorVariants': partColorVariants,
     'assemblyItems': assemblyItems,
+    'assemblyLinks': assemblyLinks,
+    'serviceItems': serviceItems,
+    'customerVehicles': customerVehicles,
     'itemResolutions': itemResolutions,
     'dots': dots,
-    'assemblyLinks': assemblyLinks,
-    'parts': parts,
-    'partNumbers': partNumbers,
-    'partColorVariants': partColorVariants,
-    'aliases': aliases,
-    'serviceItems': serviceItems,
-    'partSubstitutes': partSubstitutes,
-    // CRM tables
-    'customers': customers,
-    'customerVehicles': customerVehicles,
     'maintenanceRecords': maintenanceRecords,
     'maintenanceItems': maintenanceItems,
   };
