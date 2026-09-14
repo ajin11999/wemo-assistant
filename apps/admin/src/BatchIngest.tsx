@@ -28,7 +28,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { api } from './api';
-import { autoMap, b64of, getMapDots, setMapDots } from './ingest-helpers';
+import { autoMap, b64of, getMapDots, pageHasDiagram, setMapDots } from './ingest-helpers';
 import { notifySuccess } from './notify';
 import type { ExtractedColorPage, ExtractedPage } from './types';
 
@@ -55,18 +55,6 @@ type Phase = { label: string; done: number; total: number } | null;
 
 function inferGroup(code: string): 'engine' | 'frame' {
   return code.trim().toUpperCase().startsWith('F') ? 'frame' : 'engine';
-}
-
-// Does this page actually carry the exploded diagram? Multi-page assemblies put the diagram
-// on page 1 and continue the parts table on later pages that share the same code. A
-// table-only continuation page returns a whole-page bbox ({0,0,1,1}) and no balloon dots — we
-// must NOT run autoMap for it, or its blank crop would overwrite page 1's diagram and its
-// empty dot set would wipe page 1's dots.
-function pageHasDiagram(ex: ExtractedPage): boolean {
-  if (ex.items.some((it) => it.dots && it.dots.length > 0)) return true;
-  const b = ex.diagram;
-  if (!b) return false;
-  return b.x > 0.03 || b.y > 0.03 || b.width < 0.97 || b.height < 0.97;
 }
 
 const borderFor: Record<PageStatus, string> = {

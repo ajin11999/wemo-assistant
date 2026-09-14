@@ -26,6 +26,7 @@ import {
   IconSettings,
   IconSparkles,
   IconSun,
+  IconUpload,
   IconUsers,
 } from '@tabler/icons-react';
 import { api } from './api';
@@ -35,6 +36,7 @@ import { theme } from './theme';
 import { IngestView } from './IngestView';
 import { ColorIngestView } from './ColorIngestView';
 import { BatchIngest } from './BatchIngest';
+import { BlobIngest } from './BlobIngest';
 import { DotEditor } from './DotEditor';
 import { BrowseView } from './BrowseView';
 import { SubstitutesView } from './SubstitutesView';
@@ -128,6 +130,9 @@ function Shell() {
                 <Tabs.Tab value="batch" leftSection={<IconFiles size={16} />}>
                   Batch (PDF)
                 </Tabs.Tab>
+                <Tabs.Tab value="blob" leftSection={<IconUpload size={16} />}>
+                  Blob file
+                </Tabs.Tab>
                 <Tabs.Tab value="color" leftSection={<IconPalette size={16} />}>
                   Color index
                 </Tabs.Tab>
@@ -156,6 +161,9 @@ function Shell() {
               </Tabs.Panel>
               <Tabs.Panel value="batch" pt="md">
                 {machineId ? <BatchIngest machineId={machineId} onCommitted={bump} /> : <NeedMachine />}
+              </Tabs.Panel>
+              <Tabs.Panel value="blob" pt="md">
+                {machineId ? <BlobIngest machineId={machineId} onCommitted={bump} /> : <NeedMachine />}
               </Tabs.Panel>
               <Tabs.Panel value="color" pt="md">
                 {machineId ? <ColorIngestView machineId={machineId} onCommitted={bump} /> : <NeedMachine />}

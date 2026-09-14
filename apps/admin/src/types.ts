@@ -69,6 +69,57 @@ export type CommitSummary = {
   assembliesReplaced: number;
 };
 
+// --- Ingest blob (multi-PDF single-file package, single machine) ---
+// Produced offline by a subscription model from one machine's catalog PDFs
+// (see docs/blob-ingest.md) and staged in the admin UI before committing.
+// Dots stay in FULL-PAGE coords (same convention as ExtractedItem.dots); the
+// importer transforms them into crop space via `extracted.diagram`, exactly
+// like ingest-helpers.autoMap. Identity of a page is (source, pageNo);
+// `seq` is the global commit order across all source PDFs.
+
+export const BLOB_VERSION = 1;
+
+export type BlobMachineHint = { brand?: string | null; model?: string | null; typeCode?: string | null };
+
+export type BlobAssemblyPage = {
+  source: string;
+  pageNo: number;
+  seq: number;
+  type: 'assembly';
+  groupType: 'engine' | 'frame';
+  extracted: ExtractedPage;
+  // Cropped diagram image (what lands in R2). Omitted on table-only
+  // continuation pages (merge-only, no diagram).
+  diagramCropBase64?: string | null;
+  mediaType?: string | null;
+  width?: number | null;
+  height?: number | null;
+  thumbDataUrl?: string | null;
+};
+
+export type BlobColorPage = {
+  source: string;
+  pageNo: number;
+  seq: number;
+  type: 'color';
+  extracted: ExtractedColorPage;
+};
+
+export type BlobPage = BlobAssemblyPage | BlobColorPage;
+
+export type BlobPackage = {
+  version: number;
+  exportedAt?: number | null;
+  sourcePdf?: string | null;
+  machineHint?: BlobMachineHint | null;
+  sources: string[];
+  pages: BlobPage[];
+};
+
+export type PreviewEntry =
+  | { value: string; found: true; partId: string; name: string | null; primaryNumber: string }
+  | { value: string; found: false; partId: null; name: null; primaryNumber: null };
+
 export type ColorCommitSummary = {
   colorsCreated: number;
   colorsReused: number;

@@ -1,12 +1,12 @@
 import { Hono } from 'hono';
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Bindings } from '../bindings';
 import { requireAdmin } from '../middleware/auth';
 import { getVisionProvider, resolveAiConfig } from '../ai';
 import type { ImageMediaType } from '../ai/provider';
 import { extractedColorPage, extractedPage } from '../ai/types';
 import { getDb } from '../db/client';
-import { machines } from '../db/schema';
+import { machines, partNumbers, parts } from '../db/schema';
 import { persistExtractedPage } from '../services/ingest-persist';
 import { persistColorPage } from '../services/color-persist';
 
@@ -32,6 +32,63 @@ ingestRoute.post('/page', requireAdmin, async (c) => {
   } catch (e) {
     return c.json({ error: 'extraction failed', detail: String(e) }, 502);
   }
+});
+
+// Batch number-existence check for blob-import preview. Read-only: given the
+// distinct part numbers staged from a blob file, report which already exist as
+// live canonical parts (green "exists" badge) vs which would be created on
+// commit (grey "new" badge). One round-trip instead of N+1 GET /parts?number=.
+// A 50-page blob carries ~500-1000 distinct numbers; cap keeps the IN clause
+// and response bounded. Admin-only like the rest of the ingest surface.
+const MAX_PREVIEW_NUMBERS = 2000;
+ingestRoute.post('/preview', requireAdmin, async (c) => {
+  const body = await c.req.json<{ numbers?: unknown }>().catch(() => null);
+  if (!Array.isArray(body?.numbers)) {
+    return c.json({ error: 'numbers string array is required' }, 400);
+  }
+  const wanted = [...new Set(body.numbers.filter((n): n is string => typeof n === 'string').map((n) => n.trim()).filter(Boolean))];
+  if (wanted.length === 0) return c.json({ results: [] });
+  if (wanted.length > MAX_PREVIEW_NUMBERS) {
+    return c.json({ error: `too many numbers (max ${MAX_PREVIEW_NUMBERS})` }, 400);
+  }
+
+  const db = getDb(c.env);
+  const matched = await db
+    .select({ value: partNumbers.value, partId: partNumbers.partId })
+    .from(partNumbers)
+    .where(and(inArray(partNumbers.value, wanted), isNull(partNumbers.deletedAt)));
+
+  const seenValueToPart = new Map(matched.map((m) => [m.value, m.partId]));
+  const partIds = [...new Set(matched.map((m) => m.partId))];
+  const partRows = partIds.length
+    ? await db.select().from(parts).where(inArray(parts.id, partIds))
+    : [];
+  const nameById = new Map(partRows.map((p) => [p.id, (p.nameNormalized ?? p.nameRaw) as string]));
+  const numRows = partIds.length
+    ? await db
+        .select({ partId: partNumbers.partId, value: partNumbers.value, isPrimary: partNumbers.isPrimary })
+        .from(partNumbers)
+        .where(and(inArray(partNumbers.partId, partIds), isNull(partNumbers.deletedAt)))
+    : [];
+  const primaryById = new Map<string, string>();
+  for (const n of numRows) {
+    if (n.isPrimary && !primaryById.has(n.partId)) primaryById.set(n.partId, n.value);
+    else if (!primaryById.has(n.partId)) primaryById.set(n.partId, n.value);
+  }
+
+  return c.json({
+    results: wanted.map((value) => {
+      const partId = seenValueToPart.get(value);
+      if (!partId) return { value, found: false as const, partId: null, name: null, primaryNumber: null };
+      return {
+        value,
+        found: true as const,
+        partId,
+        name: nameById.get(partId) ?? null,
+        primaryNumber: primaryById.get(partId) ?? value,
+      };
+    }),
+  });
 });
 
 // Persist a reviewed assembly draft. Parts deduped by number (interchange merge).

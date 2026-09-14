@@ -17,6 +17,7 @@ import type {
   Machine,
   MachineVariant,
   PartFull,
+  PreviewEntry,
   Proposal,
   SearchResult,
   WarrantyExpiryResponse,
@@ -68,6 +69,12 @@ export const api = {
       method: 'POST',
       admin: true,
       body: { machineId, groupType, extracted },
+    }),
+  previewNumbers: (numbers: string[]) =>
+    req<{ results: PreviewEntry[] }>('/ingest/preview', {
+      method: 'POST',
+      admin: true,
+      body: { numbers },
     }),
   ingestColorPage: (imageBase64: string, mediaType: string) =>
     req<{ extracted: ExtractedColorPage }>('/ingest/color-page', {
