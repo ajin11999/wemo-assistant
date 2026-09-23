@@ -8,7 +8,7 @@ import { BLOB_VERSION } from './types';
 // OOM on the base64 crops, and the commit loop becomes unresumable in
 // practice — so oversize blobs are rejected outright: split by group
 // (engine/frame) into two files instead. Byte cap guards the JSON.parse.
-export const BLOB_MAX_PAGES = 50;
+export const BLOB_MAX_PAGES = 100;
 export const BLOB_MAX_BYTES = 80 * 1024 * 1024;
 
 // Does this extracted page actually carry the exploded diagram? Multi-page

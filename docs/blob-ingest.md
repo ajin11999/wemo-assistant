@@ -14,11 +14,25 @@ resolved to positions after each page commits.
 
 ## Hard caps (enforced at upload)
 
-- **50 pages** per blob (`BLOB_MAX_PAGES`). Larger catalog → split by group
-  (one blob engine `E-*`, one blob frame `F-*`).
+- **100 pages** per blob (`BLOB_MAX_PAGES`). Enough for a whole machine's catalog
+  (engine + frame). If exceeding, split by group (one blob engine `E-*`, one blob frame `F-*`).
 - **80 MB** file (`BLOB_MAX_BYTES`). Past this the browser tab risks OOM on
   the base64 crops.
 - Oversize files are **rejected outright** — shrink/split, don't retry.
+
+## Page Prioritization & Skipping Non-Essential Pages
+
+When catalog length or ingestion time is a constraint, prioritize core mechanical parts over decorative accessories:
+
+1. **High Priority (Core Mechanical — MUST INGEST):**
+   - **Engine Groups (`E-*`):** Cylinder head, piston, crankshaft, carburetor/FI, transmission, clutch, oil pump, starter.
+   - **Frame Groups (`F-1` to `F-26`):** Brakes, front/rear wheels, suspension, steering stem, exhaust, fuel tank, wire harness.
+2. **Low Priority / Optional (Can be classified as `skip` to stay within limits):**
+   - **Tools (`F-27`):** Spark plug wrench, screwdriver.
+   - **Caution Labels (`F-28`):** Safety and tire specification warning stickers.
+   - **Mark / Stripe (`F-29`):** Body decals, cosmetic striping sets.
+
+If a catalog is near the limit, skipping Tier 2 saves 3–5 pages and several MBs of decal data without missing any repair or maintenance spare parts.
 
 ## What to feed the model
 

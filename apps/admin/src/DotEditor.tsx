@@ -6,13 +6,14 @@ import {
   Card,
   FileButton,
   Group,
+  Modal,
   ScrollArea,
   Select,
   Stack,
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { IconDeviceFloppy, IconMapPin, IconPhotoUp } from '@tabler/icons-react';
+import { IconDeviceFloppy, IconMapPin, IconPhotoUp, IconTrash } from '@tabler/icons-react';
 import { api, imageUrl } from './api';
 import { b64of, fileToDataUrl, imageMeta } from './ingest-helpers';
 import { notifyError, notifySuccess } from './notify';
@@ -27,7 +28,10 @@ export function DotEditor({ machineId, refreshKey }: { machineId: string; refres
   const [hasImage, setHasImage] = useState(false);
   const [imgV, setImgV] = useState(0);
   const [busy, setBusy] = useState<'idle' | 'uploading' | 'saving'>('idle');
+  const [confirmClear, setConfirmClear] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  const currentAsm = useMemo(() => assemblies.find((a) => a.id === asmId), [assemblies, asmId]);
 
   useEffect(() => {
     setAsmId(null);
@@ -98,35 +102,71 @@ export function DotEditor({ machineId, refreshKey }: { machineId: string; refres
     }
   }
 
+  function handleClearCanvas() {
+    setDots([]);
+    setConfirmClear(false);
+    notifySuccess('Cleared dots from canvas. Click "Save dots" when ready.');
+  }
+
+  async function handleClearAndSave() {
+    if (!asmId) return;
+    setDots([]);
+    setConfirmClear(false);
+    setBusy('saving');
+    try {
+      await api.saveDots(asmId, []);
+      notifySuccess('Cleared and saved 0 dots to database');
+    } catch (e) {
+      notifyError('Clear failed', String(e));
+    } finally {
+      setBusy('idle');
+    }
+  }
+
   return (
     <Stack>
       <Card withBorder>
-        <Group>
-          <Select
-            placeholder="Select assembly"
-            data={assemblies.map((a) => ({ value: a.id, label: `${a.code} · ${a.name}` }))}
-            value={asmId}
-            onChange={openAssembly}
-            searchable
-            w={360}
-          />
+        <Group justify="space-between" wrap="wrap">
+          <Group>
+            <Select
+              placeholder="Select assembly"
+              data={assemblies.map((a) => ({ value: a.id, label: `${a.code} · ${a.name}` }))}
+              value={asmId}
+              onChange={openAssembly}
+              searchable
+              w={360}
+            />
+            {asmId && (
+              <>
+                <FileButton onChange={onImage} accept="image/*">
+                  {(props) => (
+                    <Button
+                      variant="default"
+                      leftSection={<IconPhotoUp size={16} />}
+                      loading={busy === 'uploading'}
+                      {...props}
+                    >
+                      Upload diagram
+                    </Button>
+                  )}
+                </FileButton>
+                <Text size="sm" c="dimmed">
+                  {hasImage ? 'diagram loaded' : 'no diagram yet — upload one'}
+                </Text>
+              </>
+            )}
+          </Group>
           {asmId && (
-            <>
-              <FileButton onChange={onImage} accept="image/*">
-                {(props) => (
-                  <Button
-                    variant="default"
-                    leftSection={<IconPhotoUp size={16} />}
-                    loading={busy === 'uploading'}
-                    {...props}
-                  >
-                    Upload diagram
-                  </Button>
-                )}
-              </FileButton>
-              <Text size="sm" c="dimmed">
-                {hasImage ? 'diagram loaded' : 'no diagram yet — upload one'}
-              </Text>
+            <Group>
+              <Button
+                variant="subtle"
+                color="red"
+                leftSection={<IconTrash size={16} />}
+                onClick={() => setConfirmClear(true)}
+                disabled={dots.length === 0}
+              >
+                Clear all dots ({dots.length})
+              </Button>
               <Button
                 leftSection={<IconDeviceFloppy size={16} />}
                 onClick={save}
@@ -135,10 +175,39 @@ export function DotEditor({ machineId, refreshKey }: { machineId: string; refres
               >
                 Save dots
               </Button>
-            </>
+            </Group>
           )}
         </Group>
       </Card>
+
+      <Modal
+        opened={confirmClear}
+        onClose={() => setConfirmClear(false)}
+        title="Clear all dots?"
+        centered
+        size="sm"
+      >
+        <Stack gap="sm">
+          <Text size="sm">
+            Are you sure you want to clear all <strong>{dots.length}</strong> dots for{' '}
+            <strong>{currentAsm?.code} · {currentAsm?.name}</strong>?
+          </Text>
+          <Text size="xs" c="dimmed">
+            You can clear the canvas to start placing dots fresh, or clear and save immediately to remove them from the database.
+          </Text>
+          <Group justify="flex-end" gap="xs" mt="md">
+            <Button variant="default" size="xs" onClick={() => setConfirmClear(false)}>
+              Cancel
+            </Button>
+            <Button variant="light" color="red" size="xs" onClick={handleClearCanvas}>
+              Clear canvas
+            </Button>
+            <Button color="red" size="xs" onClick={handleClearAndSave} loading={busy === 'saving'}>
+              Clear & save now
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       {asmId && (
         <Card withBorder>

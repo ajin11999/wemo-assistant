@@ -53,23 +53,39 @@ ingestRoute.post('/preview', requireAdmin, async (c) => {
   }
 
   const db = getDb(c.env);
-  const matched = await db
-    .select({ value: partNumbers.value, partId: partNumbers.partId })
-    .from(partNumbers)
-    .where(and(inArray(partNumbers.value, wanted), isNull(partNumbers.deletedAt)));
+  const CHUNK_SIZE = 80;
+
+  const matched: { value: string; partId: string }[] = [];
+  for (let i = 0; i < wanted.length; i += CHUNK_SIZE) {
+    const chunk = wanted.slice(i, i + CHUNK_SIZE);
+    const rows = await db
+      .select({ value: partNumbers.value, partId: partNumbers.partId })
+      .from(partNumbers)
+      .where(and(inArray(partNumbers.value, chunk), isNull(partNumbers.deletedAt)));
+    matched.push(...rows);
+  }
 
   const seenValueToPart = new Map(matched.map((m) => [m.value, m.partId]));
   const partIds = [...new Set(matched.map((m) => m.partId))];
-  const partRows = partIds.length
-    ? await db.select().from(parts).where(inArray(parts.id, partIds))
-    : [];
+
+  const partRows: (typeof parts.$inferSelect)[] = [];
+  for (let i = 0; i < partIds.length; i += CHUNK_SIZE) {
+    const chunk = partIds.slice(i, i + CHUNK_SIZE);
+    const rows = await db.select().from(parts).where(inArray(parts.id, chunk));
+    partRows.push(...rows);
+  }
   const nameById = new Map(partRows.map((p) => [p.id, (p.nameNormalized ?? p.nameRaw) as string]));
-  const numRows = partIds.length
-    ? await db
-        .select({ partId: partNumbers.partId, value: partNumbers.value, isPrimary: partNumbers.isPrimary })
-        .from(partNumbers)
-        .where(and(inArray(partNumbers.partId, partIds), isNull(partNumbers.deletedAt)))
-    : [];
+
+  const numRows: { partId: string; value: string; isPrimary: boolean }[] = [];
+  for (let i = 0; i < partIds.length; i += CHUNK_SIZE) {
+    const chunk = partIds.slice(i, i + CHUNK_SIZE);
+    const rows = await db
+      .select({ partId: partNumbers.partId, value: partNumbers.value, isPrimary: partNumbers.isPrimary })
+      .from(partNumbers)
+      .where(and(inArray(partNumbers.partId, chunk), isNull(partNumbers.deletedAt)));
+    numRows.push(...rows);
+  }
+
   const primaryById = new Map<string, string>();
   for (const n of numRows) {
     if (n.isPrimary && !primaryById.has(n.partId)) primaryById.set(n.partId, n.value);

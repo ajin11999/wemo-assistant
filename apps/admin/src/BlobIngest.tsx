@@ -216,10 +216,10 @@ export function BlobIngest({ machineId, onCommitted }: { machineId: string; onCo
           const ex = p.assemblyExtracted;
           const { summary } = await api.commitPage(machineId, p.groupType, ex);
           let mapNote = '';
-          if (pageHasDiagram(ex)) {
+          if (p.crop || pageHasDiagram(ex)) {
             try {
               const n = await commitBlobCrop(summary.assemblyId, ex, p.crop);
-              mapNote = `, ${n} dots`;
+              mapNote = n > 0 ? `, ${n} dots` : (p.crop ? ', image uploaded' : '');
             } catch {
               /* dots best-effort */
             }

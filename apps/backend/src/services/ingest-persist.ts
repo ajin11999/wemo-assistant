@@ -126,15 +126,24 @@ export async function persistExtractedPage(db: Db, input: PersistInput): Promise
   // numbers from other pages of the same multi-page assembly stay put.
   await softDeleteItemsByRefs(db, assembly.id, extracted.items.map((it) => it.refNo));
 
+  // Pre-fetch all existing numbers for this page in a single query to eliminate N+1 SELECTs.
+  const allPageNumbers = [...new Set(extracted.items.flatMap((it) => it.partNumbers.map((pn) => pn.value.trim())).filter(Boolean))];
+  const numberRowByValue = new Map<string, typeof partNumbers.$inferSelect>();
+  const CHUNK_SIZE = 80;
+  for (let i = 0; i < allPageNumbers.length; i += CHUNK_SIZE) {
+    const chunk = allPageNumbers.slice(i, i + CHUNK_SIZE);
+    const rows = await db
+      .select()
+      .from(partNumbers)
+      .where(and(inArray(partNumbers.value, chunk), isNull(partNumbers.deletedAt)));
+    for (const r of rows) numberRowByValue.set(r.value, r);
+  }
+
   for (const item of extracted.items) {
     // Resolve the canonical part: reuse an existing part if any number already exists.
     let partId: string | null = null;
     for (const pn of item.partNumbers) {
-      const existing = await db
-        .select({ partId: partNumbers.partId })
-        .from(partNumbers)
-        .where(eq(partNumbers.value, pn.value))
-        .get();
+      const existing = numberRowByValue.get(pn.value);
       if (existing) {
         partId = existing.partId;
         break;
@@ -158,11 +167,7 @@ export async function persistExtractedPage(db: Db, input: PersistInput): Promise
     // to this position via item_resolutions with the quantity.
     let isFirst = true;
     for (const pn of item.partNumbers) {
-      let numberRow = await db
-        .select()
-        .from(partNumbers)
-        .where(eq(partNumbers.value, pn.value))
-        .get();
+      let numberRow = numberRowByValue.get(pn.value);
       if (!numberRow) {
         const [inserted] = await db
           .insert(partNumbers)
@@ -175,6 +180,7 @@ export async function persistExtractedPage(db: Db, input: PersistInput): Promise
           })
           .returning();
         numberRow = inserted;
+        numberRowByValue.set(pn.value, inserted);
         summary.numbersCreated++;
       }
       // One resolution row per applicable variant (per-variant Jumlah cells), or a single
