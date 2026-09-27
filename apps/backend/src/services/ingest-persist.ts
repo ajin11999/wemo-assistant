@@ -28,6 +28,7 @@ export type PersistSummary = {
   resolutionsCreated: number;
   machineVariantsCreated: number;
   assembliesReplaced: number;
+  dotsCreated: number;
 };
 
 /**
@@ -60,6 +61,7 @@ export async function persistExtractedPage(db: Db, input: PersistInput): Promise
     resolutionsCreated: 0,
     machineVariantsCreated: 0,
     assembliesReplaced: 0,
+    dotsCreated: 0,
   };
 
   // Machine variants referenced by per-variant quantities, get-or-created by name
@@ -162,6 +164,20 @@ export async function persistExtractedPage(db: Db, input: PersistInput): Promise
       .values({ assemblyId: assembly.id, refNo: item.refNo, basePartId: partId })
       .returning();
     summary.itemsCreated++;
+
+    // Insert balloon dots for this item position
+    if (Array.isArray(item.dots) && item.dots.length > 0) {
+      for (const d of item.dots) {
+        if (typeof d.x === 'number' && typeof d.y === 'number') {
+          await db.insert(dots).values({
+            assemblyItemId: assemblyItem.id,
+            x: d.x,
+            y: d.y,
+          });
+          summary.dotsCreated++;
+        }
+      }
+    }
 
     // Ensure each number exists (attach new ones to the canonical part), then link it
     // to this position via item_resolutions with the quantity.

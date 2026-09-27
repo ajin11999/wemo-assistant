@@ -54,22 +54,44 @@ assembliesRoute.get('/:id/full', async (c) => {
   const partIds = [...new Set(items.map((i) => i.basePartId).filter((x): x is string => !!x))];
   const itemIds = items.map((i) => i.id);
 
-  const partRows = partIds.length ? await db.select().from(parts).where(inArray(parts.id, partIds)) : [];
-  const numberRows = partIds.length
-    ? await db.select().from(partNumbers).where(inArray(partNumbers.partId, partIds))
-    : [];
-  const resolutionRows = itemIds.length
-    ? await db
-        .select()
-        .from(itemResolutions)
-        .where(and(inArray(itemResolutions.assemblyItemId, itemIds), isNull(itemResolutions.deletedAt)))
-    : [];
-  const dotRows = itemIds.length
-    ? await db
-        .select()
-        .from(dots)
-        .where(and(inArray(dots.assemblyItemId, itemIds), isNull(dots.deletedAt)))
-    : [];
+  const CHUNK_SIZE = 80;
+
+  const partRows: (typeof parts.$inferSelect)[] = [];
+  for (let i = 0; i < partIds.length; i += CHUNK_SIZE) {
+    const chunk = partIds.slice(i, i + CHUNK_SIZE);
+    const rows = await db.select().from(parts).where(inArray(parts.id, chunk));
+    partRows.push(...rows);
+  }
+
+  const numberRows: (typeof partNumbers.$inferSelect)[] = [];
+  for (let i = 0; i < partIds.length; i += CHUNK_SIZE) {
+    const chunk = partIds.slice(i, i + CHUNK_SIZE);
+    const rows = await db
+      .select()
+      .from(partNumbers)
+      .where(and(inArray(partNumbers.partId, chunk), isNull(partNumbers.deletedAt)));
+    numberRows.push(...rows);
+  }
+
+  const resolutionRows: (typeof itemResolutions.$inferSelect)[] = [];
+  for (let i = 0; i < itemIds.length; i += CHUNK_SIZE) {
+    const chunk = itemIds.slice(i, i + CHUNK_SIZE);
+    const rows = await db
+      .select()
+      .from(itemResolutions)
+      .where(and(inArray(itemResolutions.assemblyItemId, chunk), isNull(itemResolutions.deletedAt)));
+    resolutionRows.push(...rows);
+  }
+
+  const dotRows: (typeof dots.$inferSelect)[] = [];
+  for (let i = 0; i < itemIds.length; i += CHUNK_SIZE) {
+    const chunk = itemIds.slice(i, i + CHUNK_SIZE);
+    const rows = await db
+      .select()
+      .from(dots)
+      .where(and(inArray(dots.assemblyItemId, chunk), isNull(dots.deletedAt)));
+    dotRows.push(...rows);
+  }
   const svc = await db
     .select()
     .from(serviceItems)
@@ -198,44 +220,52 @@ assembliesRoute.post('/:id/image', requireAdmin, async (c) => {
 // Replace the full set of balloon dots for this assembly's items (editor saves all at once).
 // x/y are normalized 0..1 relative to the diagram image. A position may have several dots.
 assembliesRoute.put('/:id/dots', requireAdmin, async (c) => {
-  const id = c.req.param('id');
-  const db = getDb(c.env);
+  try {
+    const id = c.req.param('id');
+    const db = getDb(c.env);
 
-  const body = await c.req
-    .json<{ dots?: { assemblyItemId: string; x: number; y: number }[] }>()
-    .catch(() => null);
-  if (!body?.dots) return c.json({ error: 'dots array is required' }, 400);
+    const body = await c.req
+      .json<{ dots?: { assemblyItemId: string; x: number; y: number }[] }>()
+      .catch(() => null);
+    if (!body?.dots) return c.json({ error: 'dots array is required' }, 400);
 
-  const items = await db
-    .select({ id: assemblyItems.id })
-    .from(assemblyItems)
-    .where(eq(assemblyItems.assemblyId, id));
-  const validItemIds = new Set(items.map((i) => i.id));
-  for (const d of body.dots) {
-    if (!validItemIds.has(d.assemblyItemId)) {
-      return c.json({ error: `dot references an item not in this assembly: ${d.assemblyItemId}` }, 400);
+    const items = await db
+      .select({ id: assemblyItems.id })
+      .from(assemblyItems)
+      .where(and(eq(assemblyItems.assemblyId, id), isNull(assemblyItems.deletedAt)));
+    const validItemIds = new Set(items.map((i) => i.id));
+    for (const d of body.dots) {
+      if (!validItemIds.has(d.assemblyItemId)) {
+        return c.json({ error: `dot references an item not in this assembly: ${d.assemblyItemId}` }, 400);
+      }
     }
-  }
 
-  const itemIds = items.map((i) => i.id);
-  // Soft-delete the current live dots (don't hard-delete): the clerk replica only
-  // learns a row is gone via a `deleted_at` tombstone in the sync delta. A hard delete
-  // leaves no tombstone, so the phone would keep the stale dot AND receive the freshly
-  // inserted one -> duplicated dots offline. Only touch live rows so we don't re-bump
-  // already-tombstoned rows into every future sync page.
-  const now = new Date();
-  if (itemIds.length) {
-    await db
-      .update(dots)
-      .set({ deletedAt: now, updatedAt: now })
-      .where(and(inArray(dots.assemblyItemId, itemIds), isNull(dots.deletedAt)));
+    const itemIds = items.map((i) => i.id);
+    // Soft-delete the current live dots (don't hard-delete): the clerk replica only
+    // learns a row is gone via a `deleted_at` tombstone in the sync delta. A hard delete
+    // leaves no tombstone, so the phone would keep the stale dot AND receive the freshly
+    // inserted one -> duplicated dots offline. Only touch live rows so we don't re-bump
+    // already-tombstoned rows into every future sync page.
+    const now = new Date();
+    const UPDATE_CHUNK_SIZE = 50;
+    for (let i = 0; i < itemIds.length; i += UPDATE_CHUNK_SIZE) {
+      const chunk = itemIds.slice(i, i + UPDATE_CHUNK_SIZE);
+      await db
+        .update(dots)
+        .set({ deletedAt: now, updatedAt: now })
+        .where(and(inArray(dots.assemblyItemId, chunk), isNull(dots.deletedAt)));
+    }
+
+    // D1 caps bound parameters per statement (~100); a dense diagram can have dozens of
+    // dots and each row binds 6 columns, so insert in chunks of 10 (60 params) to stay well under the limit.
+    const DOTS_PER_INSERT = 10;
+    const rows = body.dots.map((d) => ({ assemblyItemId: d.assemblyItemId, x: d.x, y: d.y }));
+    for (let i = 0; i < rows.length; i += DOTS_PER_INSERT) {
+      await db.insert(dots).values(rows.slice(i, i + DOTS_PER_INSERT));
+    }
+    return c.json({ ok: true, count: body.dots.length });
+  } catch (err: any) {
+    console.error('Error saving dots for assembly:', c.req.param('id'), err);
+    return c.json({ error: err?.message ?? 'Failed to save dots' }, 500);
   }
-  // D1 caps bound parameters per statement (~100); a dense diagram can have dozens of
-  // dots and each row binds 6 columns, so insert in chunks to stay under the limit.
-  const DOTS_PER_INSERT = 15;
-  const rows = body.dots.map((d) => ({ assemblyItemId: d.assemblyItemId, x: d.x, y: d.y }));
-  for (let i = 0; i < rows.length; i += DOTS_PER_INSERT) {
-    await db.insert(dots).values(rows.slice(i, i + DOTS_PER_INSERT));
-  }
-  return c.json({ ok: true, count: body.dots.length });
 });

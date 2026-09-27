@@ -95,6 +95,9 @@ export function DotEditor({ machineId, refreshKey }: { machineId: string; refres
     try {
       const r = await api.saveDots(asmId, dots);
       notifySuccess(`Saved ${r.count} dots`);
+      const full = await api.getAssemblyFull(asmId);
+      setItems(full.items);
+      setDots(full.items.flatMap((it) => it.dots.map((d) => ({ assemblyItemId: it.id, x: d.x, y: d.y }))));
     } catch (e) {
       notifyError('Save failed', String(e));
     } finally {
@@ -116,6 +119,9 @@ export function DotEditor({ machineId, refreshKey }: { machineId: string; refres
     try {
       await api.saveDots(asmId, []);
       notifySuccess('Cleared and saved 0 dots to database');
+      const full = await api.getAssemblyFull(asmId);
+      setItems(full.items);
+      setDots(full.items.flatMap((it) => it.dots.map((d) => ({ assemblyItemId: it.id, x: d.x, y: d.y }))));
     } catch (e) {
       notifyError('Clear failed', String(e));
     } finally {

@@ -17,6 +17,11 @@ import { statsRoute } from './routes/stats';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+app.onError((err, c) => {
+  console.error('Unhandled server error:', err);
+  return c.json({ error: err.message || 'Internal Server Error' }, 500);
+});
+
 app.get('/', (c) => c.json({ name: 'wemo-backend', status: 'ok' }));
 
 // DB connectivity check that does not depend on migrations having run.

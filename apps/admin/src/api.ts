@@ -43,8 +43,15 @@ async function req<T>(path: string, opts: ReqOpts = {}): Promise<T> {
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new Error(data?.error ?? res.statusText);
+  let data: any = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Server error (${res.status} ${res.statusText}): ${text.slice(0, 150)}`);
+    }
+  }
+  if (!res.ok) throw new Error(data?.error ?? data?.message ?? res.statusText);
   return data as T;
 }
 
