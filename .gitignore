@@ -41,3 +41,5 @@ Thumbs.db
 # Catalog backups (D1 rows + base64 images — can be large, not source)
 backups/
 **/backups/
+
+.sessionsave

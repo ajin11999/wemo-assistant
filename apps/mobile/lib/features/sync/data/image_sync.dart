@@ -26,13 +26,19 @@ class ImageSyncService {
   final SyncApi api;
   final ImageStore store;
 
-  Future<ImageSyncResult> sync(Iterable<AssemblyImageDelta> deltas) async {
+  Future<ImageSyncResult> sync(
+    Iterable<AssemblyImageDelta> deltas, {
+    bool skipExisting = false,
+  }) async {
     var fetched = 0, removed = 0, failed = 0;
     for (final d in deltas) {
       try {
         if (d.deleted || !d.hasImage) {
           await store.delete(d.id);
           removed++;
+          continue;
+        }
+        if (skipExisting && await store.has(d.id)) {
           continue;
         }
         final bytes = await api.fetchImage(d.id);

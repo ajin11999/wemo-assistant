@@ -45,7 +45,7 @@ class SyncController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> syncNow() async {
+  Future<void> syncNow({bool isFullSync = false}) async {
     if (status == SyncStatus.syncing) return;
     status = SyncStatus.syncing;
     errorMessage = null;
@@ -88,7 +88,11 @@ class SyncController extends ChangeNotifier {
       }
 
       // Images are best-effort: the catalog data is already synced.
-      final imageResult = await ImageSyncService(api: api, store: imageStore).sync(imageDeltas.values);
+      // In a full sync, skip re-downloading images that are already cached on disk.
+      final imageResult = await ImageSyncService(
+        api: api,
+        store: imageStore,
+      ).sync(imageDeltas.values, skipExisting: isFullSync);
       imagesFetched = imageResult.fetched;
 
       await _repo.markSynced(DateTime.now());
@@ -113,6 +117,6 @@ class SyncController extends ChangeNotifier {
     if (status == SyncStatus.syncing) return;
     await _repo.clearCatalog();
     await _repo.resetCursor();
-    await syncNow();
+    await syncNow(isFullSync: true);
   }
 }

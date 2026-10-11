@@ -23,7 +23,9 @@ class ImageStore {
     return File(p.join(dir.path, '$assemblyId.img'));
   }
 
-  Future<bool> has(String assemblyId) => fileFor(assemblyId).then((f) => f.exists());
+  Future<bool> has(String assemblyId) => fileFor(assemblyId).then((f) async {
+        return (await f.exists()) && (await f.length()) > 0;
+      });
 
   Future<void> write(String assemblyId, Uint8List bytes) async {
     final f = await fileFor(assemblyId);

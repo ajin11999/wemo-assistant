@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/images/image_store.dart';
+import '../../core/settings/app_settings.dart';
 import '../search/part_detail_screen.dart';
+import '../sync/data/sync_api.dart';
 import 'data/catalog_repository.dart';
 import 'diagram_view.dart';
 import 'fitment_controller.dart';
@@ -54,7 +56,11 @@ class _DiagramScreenState extends State<DiagramScreen> {
     super.initState();
     _assemblyId = widget.assemblyId;
     // Capture providers before the async gaps.
-    _future = _load(context.read<CatalogRepository>(), context.read<ImageStore>());
+    _future = _load(
+      context.read<CatalogRepository>(),
+      context.read<ImageStore>(),
+      context.read<AppSettings>(),
+    );
     if (widget.highlightItemId != null) {
       _future.then((data) {
         if (!mounted || data == null) return;
@@ -68,7 +74,11 @@ class _DiagramScreenState extends State<DiagramScreen> {
     }
   }
 
-  Future<_DiagramData?> _load(CatalogRepository repo, ImageStore store) async {
+  Future<_DiagramData?> _load(
+    CatalogRepository repo,
+    ImageStore store,
+    AppSettings settings,
+  ) async {
     final meta = await repo.assemblyMeta(_assemblyId);
     if (meta == null) return null;
     final dots = await repo.diagramDots(_assemblyId);
@@ -78,10 +88,32 @@ class _DiagramScreenState extends State<DiagramScreen> {
 
     File? imageFile;
     var aspect = meta.aspectRatio ?? 1.0;
-    if (await file.exists()) {
+    if (await file.exists() && (await file.length()) > 0) {
       imageFile = file;
       if (meta.aspectRatio == null) {
         aspect = await _decodeAspect(file) ?? 1.0;
+      }
+    } else if (meta.hasImage) {
+      // On-demand fetch fallback: image is in server catalog but not cached locally.
+      try {
+        final api = SyncApi(baseUrl: settings.baseUrl, apiKey: settings.apiKey);
+        try {
+          final bytes = await api.fetchImage(_assemblyId);
+          if (bytes != null && bytes.isNotEmpty) {
+            await store.write(_assemblyId, bytes);
+            final saved = await store.fileFor(_assemblyId);
+            if (await saved.exists()) {
+              imageFile = saved;
+              if (meta.aspectRatio == null) {
+                aspect = await _decodeAspect(saved) ?? 1.0;
+              }
+            }
+          }
+        } finally {
+          api.dispose();
+        }
+      } catch (_) {
+        // Network/offline failure: fall back to placeholder gracefully
       }
     }
     return _DiagramData(
@@ -122,7 +154,11 @@ class _DiagramScreenState extends State<DiagramScreen> {
       _assemblyId = assemblyId;
       _selected = null;
       _focusDot = null;
-      _future = _load(context.read<CatalogRepository>(), context.read<ImageStore>());
+      _future = _load(
+        context.read<CatalogRepository>(),
+        context.read<ImageStore>(),
+        context.read<AppSettings>(),
+      );
     });
   }
 
@@ -259,9 +295,41 @@ class _DiagramScreenState extends State<DiagramScreen> {
         if (fitment.isActive) _FitmentBanner(fitment: fitment, data: data),
         Expanded(
           child: data.imageFile == null
-              ? _Centered(
-                  'No diagram image for “${data.meta.code}”.\nIt may not be uploaded yet, or sync hasn’t fetched it.',
-                  icon: Icons.image_not_supported_outlined,
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.image_not_supported_outlined,
+                          size: 48,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No diagram image cached for “${data.meta.code}”.\nIt may not be uploaded yet, or sync hasn’t fetched it.',
+                          textAlign: TextAlign.center,
+                        ),
+                        if (data.meta.hasImage) ...[
+                          const SizedBox(height: 16),
+                          FilledButton.tonalIcon(
+                            icon: const Icon(Icons.download),
+                            label: const Text('Download Diagram'),
+                            onPressed: () {
+                              setState(() {
+                                _future = _load(
+                                  context.read<CatalogRepository>(),
+                                  context.read<ImageStore>(),
+                                  context.read<AppSettings>(),
+                                );
+                              });
+                            },
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 )
               : Padding(
                   padding: const EdgeInsets.all(8),
